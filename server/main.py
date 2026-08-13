@@ -82,7 +82,9 @@ def load_config(args):
             cfg["pw_hash"] = make_hash(args.set_passwd, cfg["salt"], cfg["iterations"])
             with open(CONFIG_PATH, "w", encoding="utf-8") as f:
                 json.dump(cfg, f, ensure_ascii=False, indent=2)
-            print("[配置] 密码已重置")
+            print("[配置] 密码已重置（运行中实例重启后生效）")
+            print("启动服务: 双击 start.bat 或 python server\\main.py")
+            sys.exit(0)   # 纯配置操作，不启动服务
         return cfg
 
     cfg = dict(DEFAULTS)
@@ -104,6 +106,9 @@ def load_config(args):
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=2)
     print(f"[配置] 已生成 {CONFIG_PATH}")
+    if args.set_passwd:
+        print("启动服务: 双击 start.bat 或 python server\\main.py")
+        sys.exit(0)   # 非交互设置密码后不启动服务
     return cfg
 
 
