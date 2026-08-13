@@ -84,7 +84,7 @@ let sessions = [], cur = null, msgs = [], total = 0, stick = true;
 let phoneSid = null, control = false, sending = false;
 let phoneMode = false;      // 「📱 手机」标签是否激活（决定输入框/提示条显隐）
 let bannerTimer = null, lastErrKey = null;
-let pendingPhone = false, firstRender = true;
+let firstRender = true;
 
 function showBanner(txt) {
   const b = $('banner');
@@ -213,12 +213,7 @@ function fillSel() {
       + esc(s.title) + ' — ' + esc(s.project) + '</option>';
   }
   $('sel').innerHTML = html;
-  if (pendingPhone && phoneSid && sessions.some((s) => s.sessionId === phoneSid)) {
-    pendingPhone = false;
-    cur = phoneSid;
-    $('sel').value = phoneSid;
-    resetView();
-  } else if (!curId && sessions.length) {
+  if (!curId && sessions.length) {
     cur = sessions[0].sessionId;
     $('sel').value = cur;
     resetView();
@@ -238,22 +233,25 @@ function resetView() {
 function applyMeta(s) {
   $('meta').textContent = (s.cwd ? s.cwd : '') + (s.branch ? '  [' + s.branch + ']' : '');
   $('dot').className = s.running ? 'run' : '';
-  $('status').textContent = phoneMode ? '📱 手机会话'
+  $('status').textContent = phoneMode ? '发消息模式'
     : (cur === phoneSid ? '手机会话' : (s.running ? '运行中' : '空闲'));
-  const isPhone = phoneMode && control && cur === phoneSid;   // 只有手机标签出输入框，监视标签纯只读
+  const showBar = phoneMode && control;          // 发消息模式：任意选中会话都可发送
   $('phonebar').classList.toggle('hidden', !phoneMode);
   if (phoneMode) {
     const note = $('phonenote');
-    if (control) {
-      note.textContent = '发来的消息会在电脑上自动执行，请只发送可信任务';
-      note.className = 'on';
-    } else {
+    if (!control) {
       note.textContent = '发送功能未启用（服务端未找到 claude）';
       note.className = 'off';
+    } else if (s.running) {
+      note.textContent = '⚠️ 该会话正在电脑上运行，暂不能发送（停止后约 1 分钟可发）';
+      note.className = 'off';
+    } else {
+      note.textContent = '消息会在所选会话中自动执行，请只发送可信任务';
+      note.className = 'on';
     }
   }
-  $('sendbar').classList.toggle('hidden', !isPhone);
-  $('msglist').style.paddingBottom = isPhone ? '80px' : '16px';
+  $('sendbar').classList.toggle('hidden', !showBar);
+  $('msglist').style.paddingBottom = showBar ? '80px' : '16px';
   layoutMsgbar();
 }
 
@@ -284,8 +282,7 @@ async function pollMsgs() {
     total = d.total;
     renderNew(d.messages);
   } else if (!$('msglist').children.length) {
-    $('msglist').innerHTML = '<div class="empty">' +
-      (control && cur === phoneSid ? '手机会话：发第一条消息开始使用' : '暂无消息') + '</div>';
+    $('msglist').innerHTML = '<div class="empty">暂无消息</div>';
   }
   applyMeta(d);
 }
@@ -308,9 +305,9 @@ async function pollStatus() {
 async function sendMsg() {
   if (sending) return;
   const t = $('inp').value.trim();
-  if (!t) return;
+  if (!t || !cur) return;
   try {
-    await api('send', {method: 'POST', body: {text: t}});
+    await api('send', {method: 'POST', body: {text: t, sessionId: cur}});
     $('inp').value = '';
   } catch (e) {
     if (e.message !== 'unauthorized' && e.message !== 'csrf') showBanner(e.message);
@@ -416,8 +413,6 @@ function switchView(name) {
   phoneMode = name === 'send';
   $('monitor-view').classList.toggle('hidden', !isMonitor);
   $('term-view').classList.toggle('hidden', name !== 'term');
-  $('sel').classList.toggle('hidden', phoneMode);   // 手机标签固定会话，不显下拉框
-  $('meta').classList.toggle('hidden', phoneMode);
   const curInfo = sessions.find((s) => s.sessionId === cur);
   if (curInfo) applyMeta(curInfo);                  // 立即刷新提示条/输入框，不等轮询
   if (isMonitor) setTimeout(layoutMsgbar, 0);
@@ -426,14 +421,11 @@ function switchView(name) {
     if (!ws || ws.readyState > 1) connectTerm();
     setTimeout(onTermResize, 50);
   } else if (name === 'send') {
-    if (phoneSid) {
-      cur = phoneSid;
-      if (sessions.some((s) => s.sessionId === phoneSid)) {
-        $('sel').value = phoneSid;
-        resetView();
-      } else {
-        pendingPhone = true;   // 会话列表就绪后 fillSel 会自动选中
-      }
+    // 发消息模式：保留当前选中的会话，切换下拉框即可控制任意会话
+    if (!cur && sessions.length) {
+      cur = sessions[0].sessionId;
+      $('sel').value = cur;
+      resetView();
     }
   }
 }

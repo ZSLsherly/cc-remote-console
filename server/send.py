@@ -1,6 +1,12 @@
 # -*- coding: utf-8 -*-
-"""手机会话管理：串行派发 claude -p 子进程（与终端会话隔离的专用会话）"""
+"""向任意 CC 会话串行发送消息（claude -p --resume）
+
+- 可对任意会话发送（手机挑中哪个会话就控制哪个）
+- 正在电脑终端活跃运行的会话拒绝介入（并发双写 transcript 会互相干扰）
+- 全局单飞行：同一时刻只跑一个发送任务
+"""
 import os
+import re
 import subprocess
 import threading
 import time
@@ -8,64 +14,74 @@ from datetime import datetime, timezone
 
 from webutil import truncate
 
+SID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
 
 class SendManager:
-    """管理专用手机会话：串行发送消息给 claude -p 子进程"""
-
-    def __init__(self, root, phone_sid, phone_cwd, claude_exe, audit, notify=None):
+    def __init__(self, root, claude_exe, audit, notify=None,
+                 session_check=None, default_cwd=None):
         self.root = root
-        self.phone_sid = phone_sid
-        self.phone_cwd = phone_cwd
         self.claude_exe = claude_exe
         self.audit = audit            # audit(event, detail, ip)
         self.notify = notify or (lambda title, body: None)   # 电脑端弹窗通知
+        self.session_check = session_check or (lambda sid: {"running": False, "cwd": None})
+        self.default_cwd = default_cwd or os.path.expanduser("~")
         self._lock = threading.Lock()
         self.sending = False
         self.since = None
         self.proc = None
         self.last_error = None
         self._stopped = False
+        self.current_sid = None
 
     def status(self):
         with self._lock:
             return {"sending": self.sending, "since": self.since,
-                    "phoneSessionId": self.phone_sid, "lastError": self.last_error}
+                    "lastError": self.last_error,
+                    "currentSessionId": self.current_sid}
 
-    def submit(self, text, ip=""):
+    def submit(self, sid, text, ip=""):
         text = (text or "").strip()
+        if not SID_RE.match(sid or ""):
+            return 400, {"error": "会话 ID 无效"}
         if not text:
             return 400, {"error": "消息不能为空"}
         if len(text) > 4000:
             return 400, {"error": "消息过长（最多 4000 字符）"}
+        info = self.session_check(sid)
+        if info.get("running"):
+            return 423, {"error": "该会话正在电脑上运行，手机暂不能介入（停止后约 1 分钟可发送）"}
         with self._lock:
             if self.sending:
                 return 409, {"error": "上一条消息还在处理中，请稍候"}
             self.last_error = None
             self.sending = True
             self.since = datetime.now(timezone.utc).isoformat()
-        self.audit("手机发送", f"text={truncate(text, 200)!r}", ip)
+            self.current_sid = sid
+        self.audit("手机发送", f"session={sid[:8]} text={truncate(text, 200)!r}", ip)
         self.notify("📱 收到手机指令", truncate(text, 80))
-        threading.Thread(target=self._run, args=(text,), daemon=True).start()
+        threading.Thread(target=self._run, args=(sid, text, info.get("cwd")), daemon=True).start()
         return 202, {"ok": True, "since": self.since}
 
-    def _transcript_exists(self):
+    def _transcript_exists(self, sid):
         try:
             for proj in os.listdir(self.root):
-                if os.path.isfile(os.path.join(self.root, proj, self.phone_sid + ".jsonl")):
+                if os.path.isfile(os.path.join(self.root, proj, sid + ".jsonl")):
                     return True
         except OSError:
             pass
         return False
 
-    def _run(self, text):
+    def _run(self, sid, text, cwd):
         try:
-            flag = "--resume" if self._transcript_exists() else "--session-id"
-            cmd = [self.claude_exe, "-p", text, flag, self.phone_sid,
+            flag = "--resume" if self._transcript_exists(sid) else "--session-id"
+            cmd = [self.claude_exe, "-p", text, flag, sid,
                    "--permission-mode", "bypassPermissions"]
             flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
             with self._lock:
                 self.proc = subprocess.Popen(
-                    cmd, cwd=self.phone_cwd,
+                    cmd, cwd=cwd or self.default_cwd,
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                     creationflags=flags)
             code = self.proc.wait()
@@ -86,9 +102,10 @@ class SendManager:
                 self.sending = False
                 self.since = None
                 self.proc = None
+                self.current_sid = None
 
     def _fail(self, msg):
-        print(f"[手机会话] {msg}")
+        print(f"[发送] {msg}")
         with self._lock:
             self.last_error = msg
 

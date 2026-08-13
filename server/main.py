@@ -315,10 +315,11 @@ class Handler(BaseHTTPRequestHandler):
                 if self.send_manager is not None:
                     d = self.send_manager.status()
                     d["control"] = True
+                    d["phoneSessionId"] = DEFAULT_PHONE_SESSION   # 仅作 UI 徽标，发送已支持任意会话
                 else:
                     d = {"sending": False, "since": None,
                          "phoneSessionId": DEFAULT_PHONE_SESSION, "lastError": None,
-                         "control": False}
+                         "currentSessionId": None, "control": False}
                 self._json(d)
             else:
                 self._json({"error": "not found"}, 404)
@@ -364,8 +365,9 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/send":
                 if self.send_manager is None:
                     return self._json({"error": "claude 不可用，发送功能未启用"}, 503)
+                body = self._read_json()
                 code, resp = self.send_manager.submit(
-                    self._read_json().get("text", ""), self._ip())
+                    body.get("sessionId", ""), body.get("text", ""), self._ip())
                 return self._json(resp, code)
             if path == "/api/stop":
                 if self.send_manager is None:
@@ -445,9 +447,11 @@ def main():
     claude_exe = resolve_claude()
     send_manager = None
     if claude_exe:
-        send_manager = SendManager(root, DEFAULT_PHONE_SESSION,
-                                   os.path.expanduser("~"), claude_exe, auth.audit,
-                                   notify=windows_toast)   # 手机活动弹窗到电脑
+        send_manager = SendManager(
+            root, claude_exe, auth.audit,
+            notify=windows_toast,                          # 手机活动弹窗到电脑
+            session_check=lambda sid: store.session_info(sid),   # 任意会话可发送
+            default_cwd=os.path.expanduser("~"))
         Handler.send_manager = send_manager
     else:
         print("[警告] 未找到 claude 命令，手机发送功能禁用（监控与终端仍可用）")

@@ -249,3 +249,15 @@ class Store:
                 "branch": s.git_branch,
                 "running": bool(s.last_ts) and (time.time() - s.last_ts) < RUNNING_WINDOW,
             }
+
+    def session_info(self, sid):
+        """发送管理器用：会话是否正在运行 + 工作目录（供 --resume 续聊时使用）"""
+        with self.lock:
+            s = self.sessions.get(sid)
+        if s is None:
+            return {"running": False, "cwd": None, "title": None}
+        return {
+            "running": bool(s.last_ts) and (time.time() - s.last_ts) < RUNNING_WINDOW,
+            "cwd": s.cwd,
+            "title": s.title or s.fallback_title(),
+        }
