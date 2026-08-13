@@ -36,6 +36,7 @@
     </div>
     <nav class="tabs">
       <button class="tab active" data-view="monitor">监视</button>
+      <button class="tab" data-view="send">📱 发消息</button>
       <button class="tab" data-view="term">终端</button>
     </nav>
   </header>
@@ -48,6 +49,7 @@
       <div id="ctrlhint">💡 要操控 CC？在下拉框选 <b>[手机] 手机会话</b> 即可发指令执行；或切到「终端」标签直接输命令</div>
       <div id="warn">手机发来的消息会自动执行（包括修改文件），请只发送可信任务</div>
       <div id="msglist"></div>
+      <button id="tobottom" class="hidden" title="回到底部">↓ 底部</button>
       <div id="banner"></div>
       <div id="sendbar" class="hidden">
         <div class="srow">

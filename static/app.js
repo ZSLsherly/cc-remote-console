@@ -83,6 +83,7 @@ $('login-form').addEventListener('submit', async (e) => {
 let sessions = [], cur = null, msgs = [], total = 0, stick = true;
 let phoneSid = null, control = false, sending = false;
 let bannerTimer = null, lastErrKey = null;
+let pendingPhone = false, firstRender = true;
 
 function showBanner(txt) {
   const b = $('banner');
@@ -123,16 +124,27 @@ function msgEl(m) {
   return div;
 }
 
+function scrollToBottom(force) {
+  const el = $('msglist');
+  el.scrollTop = el.scrollHeight;
+  if (force) stick = true;
+}
 function renderNew() {
   if (!cur || !msgs.length) return;
   const frag = document.createDocumentFragment();
   for (const m of msgs) frag.appendChild(msgEl(m));
   $('msglist').appendChild(frag);
-  if (stick) $('msglist').scrollTop = $('msglist').scrollHeight;
+  if (stick) scrollToBottom(false);
+  if (firstRender) {            // 开局强制到底部
+    firstRender = false;
+    scrollToBottom(true);
+  }
 }
 $('msglist').addEventListener('scroll', () => {
   stick = $('msglist').scrollHeight - $('msglist').scrollTop - $('msglist').clientHeight < 120;
+  $('tobottom').classList.toggle('hidden', stick);   // 滑条/回底按钮联动
 });
+$('tobottom').addEventListener('click', () => scrollToBottom(true));
 
 function fillSel() {
   const curId = $('sel').value || cur;
@@ -143,7 +155,12 @@ function fillSel() {
       + esc(s.title) + ' — ' + esc(s.project) + '</option>';
   }
   $('sel').innerHTML = html;
-  if (!curId && sessions.length) {
+  if (pendingPhone && phoneSid && sessions.some((s) => s.sessionId === phoneSid)) {
+    pendingPhone = false;
+    cur = phoneSid;
+    $('sel').value = phoneSid;
+    resetView();
+  } else if (!curId && sessions.length) {
     cur = sessions[0].sessionId;
     $('sel').value = cur;
     resetView();
@@ -153,7 +170,10 @@ $('sel').addEventListener('change', () => { cur = $('sel').value; resetView(); }
 
 function resetView() {
   msgs = []; total = 0;
+  firstRender = true;
+  stick = true;
   $('msglist').innerHTML = '<div class="empty">加载中…</div>';
+  $('tobottom').classList.add('hidden');
   pollMsgs();
 }
 
@@ -321,12 +341,25 @@ $('term-new').addEventListener('click', () => {
 function switchView(name) {
   document.querySelectorAll('.tab').forEach((b) =>
     b.classList.toggle('active', b.dataset.view === name));
-  $('monitor-view').classList.toggle('hidden', name !== 'monitor');
+  const isMonitor = name === 'monitor' || name === 'send';
+  $('monitor-view').classList.toggle('hidden', !isMonitor);
   $('term-view').classList.toggle('hidden', name !== 'term');
   if (name === 'term') {
     initTerm();
     if (!ws || ws.readyState > 1) connectTerm();
     setTimeout(onTermResize, 50);
+  } else if (name === 'send') {
+    if (phoneSid) {
+      cur = phoneSid;
+      if (sessions.some((s) => s.sessionId === phoneSid)) {
+        $('sel').value = phoneSid;
+        resetView();
+      } else {
+        pendingPhone = true;   // 会话列表就绪后 fillSel 会自动选中
+      }
+    } else {
+      showBanner('发送功能未启用（服务端未找到 claude）');
+    }
   }
 }
 document.querySelectorAll('.tab').forEach((b) =>

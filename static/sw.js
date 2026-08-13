@@ -1,18 +1,14 @@
-/* Service Worker：静态资源缓存（API 与终端 WS 直连网络） */
-const CACHE = 'ccconsole-v2';
-const STATIC = [
-  '/',
-  '/static/style.css',
-  '/static/app.js',
+/* Service Worker：vendor 静态资源缓存优先，应用文件网络优先（保证更新及时可见） */
+const CACHE = 'ccconsole-v3';
+const PRECACHE = [
   '/static/vendor/xterm.js',
   '/static/vendor/xterm.css',
   '/static/vendor/addon-fit.js',
   '/static/icon-192.png',
-  '/manifest.json',
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(STATIC)));
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(PRECACHE)));
   self.skipWaiting();
 });
 self.addEventListener('activate', (e) => {
@@ -24,14 +20,20 @@ self.addEventListener('activate', (e) => {
 });
 self.addEventListener('fetch', (e) => {
   const u = new URL(e.request.url);
-  if (u.pathname.startsWith('/api/') || u.pathname === '/term') return; // 网络直连
-  e.respondWith(
-    caches.match(e.request).then((hit) => hit || fetch(e.request).then((resp) => {
-      if (u.pathname.startsWith('/static/') && resp.ok) {
+  if (u.pathname.startsWith('/api/') || u.pathname === '/term') return;  // 网络直连
+  if (u.pathname.startsWith('/static/vendor/')) {
+    // 第三方库基本不变：缓存优先，后台填充
+    e.respondWith(
+      caches.match(e.request).then((hit) => hit || fetch(e.request).then((resp) => {
         const clone = resp.clone();
         caches.open(CACHE).then((c) => c.put(e.request, clone));
-      }
-      return resp;
-    }))
+        return resp;
+      }))
+    );
+    return;
+  }
+  // 应用文件（index/app.js/style.css/manifest）：网络优先，离线回退缓存
+  e.respondWith(
+    fetch(e.request).then((resp) => resp).catch(() => caches.match(e.request))
   );
 });
