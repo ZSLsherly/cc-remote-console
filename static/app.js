@@ -163,6 +163,7 @@ function applyMeta(s) {
   $('status').textContent = s.running ? '运行中' : '空闲';
   const isPhone = control && cur === phoneSid;
   $('warn').style.display = isPhone ? 'block' : 'none';
+  $('ctrlhint').style.display = (control && !isPhone) ? 'block' : 'none';
   $('sendbar').classList.toggle('hidden', !isPhone);
   $('msglist').style.paddingBottom = isPhone ? '80px' : '16px';
 }
@@ -251,6 +252,9 @@ function initTerm() {
     if (ws && ws.readyState === 1) ws.send(JSON.stringify({action: 'input', data: d}));
   });
   $('terminal').addEventListener('click', () => { try { term.focus(); } catch (e) {} });
+  $('term-focus').addEventListener('click', () => {   // 用户手势内 focus，Android 键盘可靠弹出
+    try { term.focus(); term.textarea.focus(); } catch (e) {}
+  });
   window.addEventListener('resize', onTermResize);
   window.addEventListener('orientationchange', () => setTimeout(onTermResize, 300));
 }

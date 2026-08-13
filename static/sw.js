@@ -1,5 +1,5 @@
 /* Service Worker：静态资源缓存（API 与终端 WS 直连网络） */
-const CACHE = 'ccconsole-v1';
+const CACHE = 'ccconsole-v2';
 const STATIC = [
   '/',
   '/static/style.css',
@@ -15,7 +15,13 @@ self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(STATIC)));
   self.skipWaiting();
 });
-self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
+self.addEventListener('activate', (e) => {
+  e.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)));
+    await self.clients.claim();
+  })());
+});
 self.addEventListener('fetch', (e) => {
   const u = new URL(e.request.url);
   if (u.pathname.startsWith('/api/') || u.pathname === '/term') return; // 网络直连
