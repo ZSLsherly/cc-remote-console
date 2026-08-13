@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0d1117">
+<title>CC 远程控制台</title>
+<link rel="icon" href="/static/icon-192.png">
+<link rel="manifest" href="/manifest.json">
+<link rel="stylesheet" href="/static/vendor/xterm.css">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<!-- 登录视图 -->
+<div id="login-view" class="hidden">
+  <form id="login-form" autocomplete="off">
+    <h1>CC 远程控制台</h1>
+    <p class="login-sub">仅 Tailscale 组网内可访问 · 密码登录</p>
+    <input id="login-user" type="text" placeholder="用户名" value="sherl">
+    <input id="login-pass" type="password" placeholder="密码" autocomplete="current-password">
+    <button type="submit" id="login-btn">登录</button>
+    <div id="login-err"></div>
+  </form>
+</div>
+
+<!-- 主应用 -->
+<div id="app" class="hidden">
+  <header>
+    <div class="hrow">
+      <span id="dot"></span>
+      <h1>CC 远程控制台</h1>
+      <span id="status">…</span>
+      <button id="logout" title="登出">↪</button>
+    </div>
+    <nav class="tabs">
+      <button class="tab active" data-view="monitor">监视</button>
+      <button class="tab" data-view="term">终端</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- 监视视图 -->
+    <section id="monitor-view" class="view">
+      <select id="sel"></select>
+      <div id="meta"></div>
+      <div id="warn">手机发来的消息会自动执行（包括修改文件），请只发送可信任务</div>
+      <div id="msglist"></div>
+      <div id="banner"></div>
+      <div id="sendbar" class="hidden">
+        <div class="srow">
+          <textarea id="inp" rows="1" placeholder="给 CC 发消息…（回车发送）" maxlength="4000"></textarea>
+          <button id="btn">发送</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 终端视图 -->
+    <section id="term-view" class="view hidden">
+      <div class="term-toolbar">
+        <span id="term-status">未连接</span>
+        <button id="term-new">新终端</button>
+      </div>
+      <div id="term-hint">点击下方终端区域唤出键盘</div>
+      <div id="terminal"></div>
+    </section>
+  </main>
+</div>
+
+<div id="err" class="hidden">无法连接服务器，请确认服务已启动</div>
+
+<script src="/static/vendor/xterm.js"></script>
+<script src="/static/vendor/addon-fit.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

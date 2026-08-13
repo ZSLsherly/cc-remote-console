@@ -1,0 +1,98 @@
+:root {
+  --bg: #0d1117; --card: #161b22; --border: #30363d;
+  --text: #e6edf3; --dim: #8b949e; --accent: #58a6ff;
+  --ok: #3fb950; --err: #f85149; --user-bubble: #1f6feb;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: var(--bg); color: var(--text);
+  font: 16px/1.6 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  height: 100%; }
+.hidden { display: none !important; }
+
+/* ---- 登录 ---- */
+#login-view { height: 100%; display: flex; align-items: center; justify-content: center; padding: 20px; }
+#login-form { width: 100%; max-width: 340px; background: var(--card);
+  border: 1px solid var(--border); border-radius: 14px; padding: 26px 22px; }
+#login-form h1 { font-size: 20px; text-align: center; margin-bottom: 4px; }
+.login-sub { font-size: 12px; color: var(--dim); text-align: center; margin-bottom: 18px; }
+#login-form input { width: 100%; background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 10px; padding: 12px;
+  font-size: 16px; margin-bottom: 12px; }
+#login-form button { width: 100%; background: var(--accent); color: #fff; border: none;
+  border-radius: 10px; padding: 12px; font-size: 16px; font-weight: 600; }
+#login-err { color: var(--err); font-size: 13px; text-align: center; margin-top: 10px; min-height: 20px; }
+
+/* ---- 应用外壳 ---- */
+#app { display: flex; flex-direction: column; height: 100dvh; }
+header { flex: none; background: var(--card); border-bottom: 1px solid var(--border);
+  padding: 8px 12px 0; }
+.hrow { display: flex; align-items: center; gap: 10px; }
+#dot { width: 10px; height: 10px; border-radius: 50%; background: var(--dim); flex: none; }
+#dot.run { background: var(--ok); animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+h1 { font-size: 16px; font-weight: 600; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#status { font-size: 12px; color: var(--dim); }
+#logout { background: none; border: 1px solid var(--border); color: var(--dim);
+  border-radius: 8px; padding: 3px 10px; font-size: 14px; }
+.tabs { display: flex; gap: 4px; margin-top: 8px; }
+.tab { flex: 1; background: none; color: var(--dim); border: none; border-bottom: 2px solid transparent;
+  padding: 8px 0; font-size: 15px; }
+.tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+
+main { flex: 1; overflow: hidden; position: relative; }
+.view { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+
+/* ---- 监视视图 ---- */
+#sel { margin: 10px 12px 0; background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px; padding: 10px; font-size: 16px; }
+#meta { font-size: 12px; color: var(--dim); padding: 4px 16px 0; }
+#warn { display: none; font-size: 12px; color: var(--err); padding: 4px 16px 0; }
+#msglist { flex: 1; overflow-y: auto; padding: 12px 14px 16px; -webkit-overflow-scrolling: touch; }
+.msg { margin-bottom: 12px; }
+.u { background: var(--user-bubble); color: #fff; border-radius: 14px 14px 4px 14px;
+  padding: 10px 14px; max-width: 92%; margin-left: auto; white-space: pre-wrap; word-break: break-word; }
+.meta-line { font-size: 11px; color: var(--dim); margin: 2px 4px 4px; }
+.a { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; }
+.a .text { white-space: pre-wrap; word-break: break-word; }
+details.think { color: var(--dim); font-style: italic; font-size: 14px; }
+details.think summary, .tool summary, .att summary { cursor: pointer; }
+.tool { border: 1px solid var(--border); border-radius: 8px; margin-top: 8px; overflow: hidden; }
+.tool.err { border-color: var(--err); }
+.tool-head { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; background: #10141b; }
+.badge { flex: none; font-size: 11px; font-weight: 600; color: var(--accent);
+  border: 1px solid var(--accent); border-radius: 4px; padding: 1px 6px; margin-top: 2px; }
+.badge.err { color: var(--err); border-color: var(--err); }
+.tool code { font: 13px/1.5 Consolas, monospace; word-break: break-all; white-space: pre-wrap; }
+.tool details { border-top: 1px solid var(--border); }
+.tool summary { font-size: 13px; color: var(--dim); padding: 6px 10px; }
+.tool pre, .att pre { font: 12px/1.5 Consolas, monospace; padding: 8px 10px;
+  white-space: pre-wrap; word-break: break-word; max-height: 320px; overflow: auto; }
+.att { border: 1px dashed var(--border); border-radius: 8px; padding: 8px 10px; }
+.att summary { font-size: 13px; color: var(--dim); }
+.empty { color: var(--dim); text-align: center; padding: 40px 0; white-space: pre-wrap; }
+
+#banner { display: none; position: fixed; left: 12px; right: 12px; bottom: 80px;
+  background: #3d1518; color: var(--err); border: 1px solid var(--err); border-radius: 8px;
+  padding: 8px 12px; font-size: 13px; z-index: 21; }
+#sendbar { flex: none; background: var(--card); border-top: 1px solid var(--border);
+  padding: 8px 12px calc(8px + env(safe-area-inset-bottom)); }
+.srow { display: flex; gap: 8px; align-items: flex-end; }
+#inp { flex: 1; background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 10px; padding: 10px 12px; font-size: 16px; font-family: inherit;
+  resize: none; min-height: 42px; max-height: 120px; line-height: 1.5; }
+#btn { flex: none; background: var(--accent); color: #fff; border: none; border-radius: 10px;
+  padding: 11px 18px; font-size: 16px; font-weight: 600; }
+#btn:disabled { opacity: .5; }
+
+/* ---- 终端视图 ---- */
+.term-toolbar { flex: none; display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px; font-size: 13px; }
+#term-status { color: var(--dim); flex: 1; }
+#term-new { background: var(--card); border: 1px solid var(--border); color: var(--text);
+  border-radius: 8px; padding: 5px 12px; font-size: 13px; }
+#term-hint { flex: none; font-size: 11px; color: var(--dim); text-align: center; padding: 2px 0 6px; }
+#terminal { flex: 1; background: #010409; padding: 6px 8px; overflow: hidden; }
+#terminal .xterm { height: 100%; }
+
+#err { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+  color: var(--err); padding: 20px; text-align: center; }

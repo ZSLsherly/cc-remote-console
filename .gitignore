@@ -1,0 +1,5 @@
+# 敏感/本地文件不纳入版本控制
+config.json
+audit.log
+__pycache__/
+*.pyc
