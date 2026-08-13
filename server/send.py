@@ -12,12 +12,13 @@ from webutil import truncate
 class SendManager:
     """管理专用手机会话：串行发送消息给 claude -p 子进程"""
 
-    def __init__(self, root, phone_sid, phone_cwd, claude_exe, audit):
+    def __init__(self, root, phone_sid, phone_cwd, claude_exe, audit, notify=None):
         self.root = root
         self.phone_sid = phone_sid
         self.phone_cwd = phone_cwd
         self.claude_exe = claude_exe
         self.audit = audit            # audit(event, detail, ip)
+        self.notify = notify or (lambda title, body: None)   # 电脑端弹窗通知
         self._lock = threading.Lock()
         self.sending = False
         self.since = None
@@ -43,6 +44,7 @@ class SendManager:
             self.sending = True
             self.since = datetime.now(timezone.utc).isoformat()
         self.audit("手机发送", f"text={truncate(text, 200)!r}", ip)
+        self.notify("📱 收到手机指令", truncate(text, 80))
         threading.Thread(target=self._run, args=(text,), daemon=True).start()
         return 202, {"ok": True, "since": self.since}
 
@@ -72,6 +74,9 @@ class SendManager:
                 self._stopped = False
             if code != 0 and not stopped:
                 self._fail(f"子进程退出码 {code}")
+                self.notify("⚠️ 手机任务失败", f"退出码 {code}")
+            elif not stopped:
+                self.notify("✅ 手机任务完成", "结果已同步到监视页面")
         except FileNotFoundError:
             self._fail("找不到 claude 可执行文件，请检查 PATH")
         except Exception as e:

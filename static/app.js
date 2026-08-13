@@ -82,6 +82,7 @@ $('login-form').addEventListener('submit', async (e) => {
 /* ================= 监视视图 ================= */
 let sessions = [], cur = null, msgs = [], total = 0, stick = true;
 let phoneSid = null, control = false, sending = false;
+let phoneMode = false;      // 「📱 手机」标签是否激活（决定输入框/提示条显隐）
 let bannerTimer = null, lastErrKey = null;
 let pendingPhone = false, firstRender = true;
 
@@ -95,8 +96,12 @@ function showBanner(txt) {
 function msgEl(m) {
   const div = document.createElement('div');
   div.className = 'msg';
-  const ts = '<div class="meta-line">' + fmtTs(m.ts) + '</div>';
+  const who = m.role === 'user'
+    ? '<span class="who me">我</span>'
+    : '<span class="who ai">AI</span>';
+  const ts = '<div class="meta-line"><span class="t">' + fmtTs(m.ts) + '</span>' + who + '</div>';
   if (m.role === 'user') {
+    if (!m.text || !m.text.trim()) return null;   // 纯工具结果消息：结果已并入 AI 工具卡片，不再渲染空蓝泡
     div.innerHTML = ts + '<div class="u">' + esc(m.text) + '</div>';
     return div;
   }
@@ -105,22 +110,26 @@ function msgEl(m) {
       + '</summary><pre>' + esc(m.attachment.content) + '</pre></details>';
     return div;
   }
-  let h = ts + '<div class="a">';
-  if (m.thinking) h += '<details class="think"><summary>思考</summary>' + esc(m.thinking) + '</details>';
-  if (m.text) h += '<div class="text">' + esc(m.text) + '</div>';
+  const parts = [];
+  if (m.thinking) parts.push('<details class="think"><summary>思考过程</summary>' + esc(m.thinking) + '</details>');
+  if (m.text && m.text.trim()) parts.push('<div class="text">' + esc(m.text) + '</div>');
   for (const t of m.tools || []) {
+    const state = t.result === null ? '<span class="tstate run" title="进行中">●</span>'
+      : (t.isError ? '<span class="tstate err" title="出错">●</span>'
+                   : '<span class="tstate ok" title="完成">●</span>');
     const errCls = t.isError ? ' err' : '';
-    h += '<div class="tool' + errCls + '"><div class="tool-head">'
+    parts.push('<div class="tool' + errCls + '"><div class="tool-head">'
+      + state
       + '<span class="badge' + errCls + '">' + esc(t.name) + '</span>'
-      + '<code>' + esc(t.summary) + '</code></div>';
-    if (t.result !== null) {
-      h += '<details' + (t.isError ? ' open' : '') + '><summary>结果' + (t.isError ? '（出错）' : '') + '</summary>'
-        + '<pre>' + esc(t.result === '' ? '（无输出）' : t.result) + '</pre></details>';
-    }
-    h += '</div>';
+      + '<code>' + esc(t.summary) + '</code></div>'
+      + (t.result !== null
+          ? '<details' + (t.isError ? ' open' : '') + '><summary>结果' + (t.isError ? '（出错）' : '') + '</summary>'
+            + '<pre>' + esc(t.result === '' ? '（无输出）' : t.result) + '</pre></details>'
+          : '')
+      + '</div>');
   }
-  h += '</div>';
-  div.innerHTML = h;
+  if (!parts.length) return null;   // 空帧不渲染
+  div.innerHTML = ts + '<div class="a">' + parts.join('') + '</div>';
   return div;
 }
 
@@ -129,22 +138,71 @@ function scrollToBottom(force) {
   el.scrollTop = el.scrollHeight;
   if (force) stick = true;
 }
-function renderNew() {
-  if (!cur || !msgs.length) return;
+function renderNew(newMsgs) {
+  if (!cur || !newMsgs.length) return;
+  const ph = $('msglist').querySelector('.empty');
+  if (ph) ph.remove();               // 清掉「暂无消息」占位
+  const els = newMsgs.map(msgEl).filter(Boolean);
+  if (!els.length) return;
   const frag = document.createDocumentFragment();
-  for (const m of msgs) frag.appendChild(msgEl(m));
+  for (const el of els) frag.appendChild(el);
   $('msglist').appendChild(frag);
   if (stick) scrollToBottom(false);
   if (firstRender) {            // 开局强制到底部
     firstRender = false;
     scrollToBottom(true);
   }
+  layoutMsgbar();
 }
 $('msglist').addEventListener('scroll', () => {
   stick = $('msglist').scrollHeight - $('msglist').scrollTop - $('msglist').clientHeight < 120;
   $('tobottom').classList.toggle('hidden', stick);   // 滑条/回底按钮联动
+  updateMsgThumb();
 });
 $('tobottom').addEventListener('click', () => scrollToBottom(true));
+
+/* ---- 自绘滚动条：手机上没有原生滚动条，自绘一个可见可拖的 ---- */
+function updateMsgThumb() {
+  const el = $('msglist');
+  const sh = el.scrollHeight, ch = el.clientHeight;
+  if (sh <= ch) { $('msgbar').style.display = 'none'; return; }
+  $('msgbar').style.display = 'block';
+  const th = Math.max(26, ch * ch / sh);
+  const t = (el.scrollTop / (sh - ch)) * (ch - th);
+  $('msgbar-thumb').style.height = th + 'px';
+  $('msgbar-thumb').style.transform = 'translateY(' + t + 'px)';
+}
+function layoutMsgbar() {
+  const el = $('msglist');
+  if (!el || el.offsetWidth === 0) { $('msgbar').style.display = 'none'; return; }
+  const r = el.getBoundingClientRect(), vr = $('monitor-view').getBoundingClientRect();
+  $('msgbar').style.top = (r.top - vr.top) + 'px';
+  $('msgbar').style.height = r.height + 'px';
+  updateMsgThumb();
+}
+let thumbDrag = null;
+$('msgbar-thumb').addEventListener('pointerdown', (e) => {
+  const el = $('msglist');
+  thumbDrag = { y: e.clientY, top: el.scrollTop, h: el.clientHeight, sh: el.scrollHeight };
+  try { $('msgbar-thumb').setPointerCapture(e.pointerId); } catch (err) {}
+  e.preventDefault();
+});
+$('msgbar-thumb').addEventListener('pointermove', (e) => {
+  if (!thumbDrag) return;
+  const el = $('msglist');
+  el.scrollTop = thumbDrag.top + (e.clientY - thumbDrag.y) / thumbDrag.h * (thumbDrag.sh - thumbDrag.h);
+});
+$('msgbar-thumb').addEventListener('pointerup', () => { thumbDrag = null; });
+$('msgbar-thumb').addEventListener('pointercancel', () => { thumbDrag = null; });
+$('msgbar').addEventListener('pointerdown', (e) => {   // 点轨道空白处：跳到对应位置
+  if (e.target === $('msgbar-thumb')) return;
+  const el = $('msglist');
+  const r = $('msgbar').getBoundingClientRect(), th = $('msgbar-thumb').offsetHeight;
+  const ratio = (e.clientY - r.top - th / 2) / Math.max(1, r.height - th);
+  el.scrollTop = Math.max(0, Math.min(1, ratio)) * (el.scrollHeight - el.clientHeight);
+});
+window.addEventListener('resize', layoutMsgbar);
+window.addEventListener('orientationchange', () => setTimeout(layoutMsgbar, 300));
 
 function fillSel() {
   const curId = $('sel').value || cur;
@@ -172,7 +230,7 @@ function resetView() {
   msgs = []; total = 0;
   firstRender = true;
   stick = true;
-  $('msglist').innerHTML = '<div class="empty">加载中…</div>';
+  $('msglist').innerHTML = '';
   $('tobottom').classList.add('hidden');
   pollMsgs();
 }
@@ -180,12 +238,23 @@ function resetView() {
 function applyMeta(s) {
   $('meta').textContent = (s.cwd ? s.cwd : '') + (s.branch ? '  [' + s.branch + ']' : '');
   $('dot').className = s.running ? 'run' : '';
-  $('status').textContent = s.running ? '运行中' : '空闲';
-  const isPhone = control && cur === phoneSid;
-  $('warn').style.display = isPhone ? 'block' : 'none';
-  $('ctrlhint').style.display = (control && !isPhone) ? 'block' : 'none';
+  $('status').textContent = phoneMode ? '📱 手机会话'
+    : (cur === phoneSid ? '手机会话' : (s.running ? '运行中' : '空闲'));
+  const isPhone = phoneMode && control && cur === phoneSid;   // 只有手机标签出输入框，监视标签纯只读
+  $('phonebar').classList.toggle('hidden', !phoneMode);
+  if (phoneMode) {
+    const note = $('phonenote');
+    if (control) {
+      note.textContent = '发来的消息会在电脑上自动执行，请只发送可信任务';
+      note.className = 'on';
+    } else {
+      note.textContent = '发送功能未启用（服务端未找到 claude）';
+      note.className = 'off';
+    }
+  }
   $('sendbar').classList.toggle('hidden', !isPhone);
   $('msglist').style.paddingBottom = isPhone ? '80px' : '16px';
+  layoutMsgbar();
 }
 
 async function pollOverview() {
@@ -205,16 +274,18 @@ async function pollMsgs() {
   if (!cur) return;
   const d = await api('messages?session=' + encodeURIComponent(cur) + '&after=' + total).catch(() => null);
   if (!d) return;
-  if (d.total !== total) {
-    if (d.total < total) { $('msglist').innerHTML = ''; msgs = []; }
+  if (d.total < total) {            // 会话被清空重建：整表重来，下轮重新拉全量
+    msgs = []; total = 0;
+    $('msglist').innerHTML = '';
+    return;
+  }
+  if (d.total !== total) {          // 有新消息：只渲染增量（旧实现全量重渲染导致重复显示）
     msgs = msgs.concat(d.messages);
     total = d.total;
-    if (!msgs.length) {
-      $('msglist').innerHTML = '<div class="empty">' +
-        (control && cur === phoneSid ? '手机会话：发第一条消息开始使用' : '暂无消息') + '</div>';
-    } else {
-      renderNew();
-    }
+    renderNew(d.messages);
+  } else if (!$('msglist').children.length) {
+    $('msglist').innerHTML = '<div class="empty">' +
+      (control && cur === phoneSid ? '手机会话：发第一条消息开始使用' : '暂无消息') + '</div>';
   }
   applyMeta(d);
 }
@@ -342,8 +413,14 @@ function switchView(name) {
   document.querySelectorAll('.tab').forEach((b) =>
     b.classList.toggle('active', b.dataset.view === name));
   const isMonitor = name === 'monitor' || name === 'send';
+  phoneMode = name === 'send';
   $('monitor-view').classList.toggle('hidden', !isMonitor);
   $('term-view').classList.toggle('hidden', name !== 'term');
+  $('sel').classList.toggle('hidden', phoneMode);   // 手机标签固定会话，不显下拉框
+  $('meta').classList.toggle('hidden', phoneMode);
+  const curInfo = sessions.find((s) => s.sessionId === cur);
+  if (curInfo) applyMeta(curInfo);                  // 立即刷新提示条/输入框，不等轮询
+  if (isMonitor) setTimeout(layoutMsgbar, 0);
   if (name === 'term') {
     initTerm();
     if (!ws || ws.readyState > 1) connectTerm();
@@ -357,8 +434,6 @@ function switchView(name) {
       } else {
         pendingPhone = true;   // 会话列表就绪后 fillSel 会自动选中
       }
-    } else {
-      showBanner('发送功能未启用（服务端未找到 claude）');
     }
   }
 }

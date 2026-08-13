@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-"""公共工具：网络探测、claude 可执行文件解析、Git Bash 探测、字符串截断"""
+"""公共工具：网络探测、claude 可执行文件解析、Git Bash 探测、字符串截断、Windows 通知"""
 import os
 import shutil
 import socket
+import subprocess
 
 
 def lan_ip():
@@ -56,3 +57,31 @@ def find_bash():
         if os.path.isfile(c):
             return c
     return None
+
+
+def windows_toast(title, body):
+    """Windows 系统通知（PowerShell + Windows.UI.Notifications，零依赖）
+
+    用于把手机端活动（收到指令/执行完成/失败）弹到电脑屏幕。
+    """
+    if os.name != "nt":
+        return
+
+    def q(s):
+        return "'" + str(s).replace("'", "''") + "'"
+
+    ps = (
+        "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null; "
+        "$t = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02); "
+        "$n = $t.GetElementsByTagName('text'); "
+        f"$n.Item(0).AppendChild($t.CreateTextNode({q(title)})) | Out-Null; "
+        f"$n.Item(1).AppendChild($t.CreateTextNode({q(body)})) | Out-Null; "
+        "$x = [Windows.UI.Notifications.ToastNotification]::new($t); "
+        "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('CC-Monitor').Show($x)"
+    )
+    try:
+        subprocess.Popen(
+            ["powershell", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", ps],
+            creationflags=subprocess.CREATE_NO_WINDOW)
+    except Exception:
+        pass

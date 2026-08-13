@@ -32,7 +32,7 @@ from send import SendManager
 from store import Store
 from term import TerminalManager
 import ws as wsmod
-from webutil import find_bash, lan_ip, resolve_claude
+from webutil import find_bash, lan_ip, resolve_claude, windows_toast
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
@@ -446,7 +446,8 @@ def main():
     send_manager = None
     if claude_exe:
         send_manager = SendManager(root, DEFAULT_PHONE_SESSION,
-                                   os.path.expanduser("~"), claude_exe, auth.audit)
+                                   os.path.expanduser("~"), claude_exe, auth.audit,
+                                   notify=windows_toast)   # 手机活动弹窗到电脑
         Handler.send_manager = send_manager
     else:
         print("[警告] 未找到 claude 命令，手机发送功能禁用（监控与终端仍可用）")
