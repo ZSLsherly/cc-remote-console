@@ -9,6 +9,7 @@ import json
 import threading
 
 from websockets.asyncio.server import serve
+from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 
 
 def _parse_cookies(header):
@@ -44,21 +45,31 @@ class TermWS:
                 action = msg.get("action")
                 if action == "attach":
                     term_id = msg.get("term_id") or self.manager.create_id()
-                    session = self.manager.attach(
+                    new_session = self.manager.attach(
                         term_id, msg.get("rows", 24), msg.get("cols", 80))
+                    if session and session is not new_session:
+                        session.clients.discard((ws, loop))   # 切终端：从旧会话摘除本连接
+                    session = new_session
                     session.clients.add((ws, loop))
                     await ws.send(json.dumps({
                         "type": "attached",
                         "term_id": session.term_id,
+                        "name": session.name,
                         "history": session.history(),
                     }, ensure_ascii=False))
                 elif action == "input" and session:
                     session.write(msg.get("data", ""))
                 elif action == "resize" and session:
                     session.resize(msg.get("rows", 24), msg.get("cols", 80))
-                elif action == "kill" and session:
-                    session.kill()
+                elif action == "kill":                        # 支持关闭任意终端
+                    target = msg.get("term_id") or (session.term_id if session else None)
+                    if target:
+                        t = self.manager.get(target)
+                        if t:
+                            t.kill()
                 # 未知 action 忽略
+        except (ConnectionClosedError, ConnectionClosedOK):
+            pass   # 手机切后台/断网等异常断开：正常现象，静默处理（会话保留，重连可恢复）
         finally:
             if session:
                 session.clients.discard((ws, loop))

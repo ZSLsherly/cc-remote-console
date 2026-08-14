@@ -85,6 +85,9 @@ let phoneSid = null, control = false, sending = false;
 let phoneMode = false;      // 「📱 手机」标签是否激活（决定输入框/提示条显隐）
 let bannerTimer = null, lastErrKey = null;
 let firstRender = true;
+const PAGE = 300;          // 长会话分页：首屏只加载最新 300 条
+let base = 0;              // 已加载消息中最早的索引（0 = 已加载全部）
+let unseen = 0;            // 上翻期间累计的新消息数
 
 function showBanner(txt) {
   const b = $('banner');
@@ -154,10 +157,23 @@ function renderNew(newMsgs) {
   }
   layoutMsgbar();
 }
+let scrollbarTimer = null;
+function flashScrollbar() {   // 滚动时浮现滚动条，1.5 秒无操作淡出
+  const bar = $('msgbar');
+  bar.classList.add('show');
+  clearTimeout(scrollbarTimer);
+  scrollbarTimer = setTimeout(() => {
+    if (!thumbDrag) bar.classList.remove('show');
+  }, 1500);
+}
 $('msglist').addEventListener('scroll', () => {
   stick = $('msglist').scrollHeight - $('msglist').scrollTop - $('msglist').clientHeight < 120;
+  if (stick) unseen = 0;
+  $('tobottom').textContent = stick ? '↓ 底部'
+    : (unseen > 0 ? ('↓ ' + unseen + ' 条新消息') : '↓ 底部');
   $('tobottom').classList.toggle('hidden', stick);   // 滑条/回底按钮联动
   updateMsgThumb();
+  flashScrollbar();
 });
 $('tobottom').addEventListener('click', () => scrollToBottom(true));
 
@@ -172,12 +188,9 @@ function updateMsgThumb() {
   $('msgbar-thumb').style.height = th + 'px';
   $('msgbar-thumb').style.transform = 'translateY(' + t + 'px)';
 }
-function layoutMsgbar() {
+function layoutMsgbar() {   // 位置由 CSS 固定（贴 msgshell 右缘），这里只更新滑块
   const el = $('msglist');
   if (!el || el.offsetWidth === 0) { $('msgbar').style.display = 'none'; return; }
-  const r = el.getBoundingClientRect(), vr = $('monitor-view').getBoundingClientRect();
-  $('msgbar').style.top = (r.top - vr.top) + 'px';
-  $('msgbar').style.height = r.height + 'px';
   updateMsgThumb();
 }
 let thumbDrag = null;
@@ -192,6 +205,7 @@ $('msgbar').addEventListener('pointerdown', (e) => {   // 整条右缘都可抓�
   thumbDrag = { sh: el.scrollHeight, ch: el.clientHeight };
   try { $('msgbar').setPointerCapture(e.pointerId); } catch (err) {}
   e.preventDefault();
+  flashScrollbar();
   el.scrollTop = scrollRatioAt(e) * (thumbDrag.sh - thumbDrag.ch);
 });
 $('msgbar').addEventListener('pointermove', (e) => {
@@ -199,8 +213,8 @@ $('msgbar').addEventListener('pointermove', (e) => {
   const el = $('msglist');
   el.scrollTop = scrollRatioAt(e) * (thumbDrag.sh - thumbDrag.ch);
 });
-$('msgbar').addEventListener('pointerup', () => { thumbDrag = null; });
-$('msgbar').addEventListener('pointercancel', () => { thumbDrag = null; });
+$('msgbar').addEventListener('pointerup', () => { thumbDrag = null; flashScrollbar(); });
+$('msgbar').addEventListener('pointercancel', () => { thumbDrag = null; flashScrollbar(); });
 window.addEventListener('resize', layoutMsgbar);
 window.addEventListener('orientationchange', () => setTimeout(layoutMsgbar, 300));
 
@@ -223,11 +237,12 @@ $('sel').addEventListener('change', () => { cur = $('sel').value; resetView(); }
 
 function resetView() {
   msgs = []; total = 0;
+  base = 0; unseen = 0;
   firstRender = true;
   stick = true;
   $('msglist').innerHTML = '';
   $('tobottom').classList.add('hidden');
-  pollMsgs();
+  pollMsgs(true);
 }
 
 function applyMeta(s) {
@@ -268,24 +283,69 @@ async function pollOverview() {
   fillSel();
 }
 
-async function pollMsgs() {
+async function pollMsgs(initial) {
   if (!cur) return;
-  const d = await api('messages?session=' + encodeURIComponent(cur) + '&after=' + total).catch(() => null);
+  let url;
+  let after = total;
+  if (initial) {                    // 首屏只加载最新 PAGE 条，长会话不卡
+    const info = sessions.find((s) => s.sessionId === cur);
+    const cnt = info && info.msgCount ? info.msgCount : 0;
+    after = Math.max(0, cnt - PAGE);
+    url = 'messages?session=' + encodeURIComponent(cur) + '&after=' + after + '&limit=' + PAGE;
+  } else {
+    url = 'messages?session=' + encodeURIComponent(cur) + '&after=' + total;
+  }
+  const d = await api(url).catch(() => null);
   if (!d) return;
-  if (d.total < total) {            // 会话被清空重建：整表重来，下轮重新拉全量
-    msgs = []; total = 0;
+  if (d.total < total) {            // 会话被清空重建：整表重来
+    msgs = []; total = 0; base = 0;
     $('msglist').innerHTML = '';
+    pollMsgs(true);
     return;
   }
-  if (d.total !== total) {          // 有新消息：只渲染增量（旧实现全量重渲染导致重复显示）
+  if (initial) {
+    msgs = d.messages.slice();
+    total = d.total;
+    base = after;
+    if (msgs.length) {
+      renderNew(msgs);
+      flashScrollbar();             // 开局闪现滚动条，提示可拉
+    } else {
+      $('msglist').innerHTML = '<div class="empty">暂无消息</div>';
+    }
+  } else if (d.total !== total) {   // 有新消息：只渲染增量
+    const n = d.messages.length;
     msgs = msgs.concat(d.messages);
     total = d.total;
-    renderNew(d.messages);
+    if (n) {
+      if (!stick) unseen += n;
+      renderNew(d.messages);
+    }
   } else if (!$('msglist').children.length) {
     $('msglist').innerHTML = '<div class="empty">暂无消息</div>';
   }
+  $('earlier').classList.toggle('hidden', base === 0);
   applyMeta(d);
 }
+
+async function loadEarlier() {      // 分批加载更早的历史消息
+  if (!cur || base === 0) return;
+  const earlier = Math.max(0, base - PAGE);
+  const d = await api('messages?session=' + encodeURIComponent(cur)
+    + '&after=' + earlier + '&limit=' + (base - earlier)).catch(() => null);
+  if (!d || !d.messages.length) return;
+  const el = $('msglist');
+  const prevH = el.scrollHeight, prevTop = el.scrollTop;
+  const els = d.messages.map(msgEl).filter(Boolean);
+  const frag = document.createDocumentFragment();
+  for (const e of els) frag.appendChild(e);
+  el.insertBefore(frag, el.firstChild);
+  msgs = d.messages.concat(msgs);
+  base = earlier;
+  el.scrollTop = el.scrollHeight - prevH + prevTop;   // 保持视觉位置不跳动
+  $('earlier').classList.toggle('hidden', base === 0);
+}
+$('earlier').addEventListener('click', loadEarlier);
 
 async function pollStatus() {
   const d = await api('status').catch(() => null);
@@ -321,8 +381,61 @@ $('inp').addEventListener('keydown', (e) => {
 /* ================= 终端视图 ================= */
 let term = null, fit = null, termId = localStorage.getItem('cc_term_id') || '';
 let ws = null, wsRetry = 0, wsWanted = false;
+let termList = [];
 
 function setTermStatus(s) { $('term-status').textContent = s; }
+
+/* ---- 多终端：下拉框切换 + 关闭 ---- */
+function renderTermSel() {
+  const box = $('term-sel');
+  if (!termList.length) { box.innerHTML = ''; return; }
+  let html = '';
+  for (const t of termList) {
+    html += '<option value="' + esc(t.term_id) + '"' + (t.term_id === termId ? ' selected' : '') + '>'
+      + esc(t.name || t.term_id.slice(0, 6))
+      + (t.idle_seconds < 60 ? ' · 活跃' : ' · 空闲' + Math.floor(t.idle_seconds / 60) + '分')
+      + '</option>';
+  }
+  box.innerHTML = html;
+}
+function refreshTermList() {
+  api('terms').then((d) => {
+    if (d && d.terms) { termList = d.terms; renderTermSel(); }
+  }).catch(() => {});   // 旧服务无此接口时静默忽略
+}
+function switchTerm(id) {
+  if (!id || id === termId) return;
+  termId = id;
+  localStorage.setItem('cc_term_id', id);
+  if (term) term.reset();
+  if (ws && ws.readyState === 1) {
+    ws.send(JSON.stringify({action: 'attach', term_id: id, rows: term.rows, cols: term.cols}));
+  } else {
+    connectTerm();
+  }
+}
+$('term-sel').addEventListener('change', (e) => { switchTerm(e.target.value); });
+$('term-close').addEventListener('click', () => {
+  if (!termId) return;
+  if (ws && ws.readyState === 1) {
+    ws.send(JSON.stringify({action: 'kill', term_id: termId}));
+  }
+  setTimeout(refreshTermList, 500);
+});
+async function renameTerm(id) {
+  if (!id) return;
+  const cur2 = termList.find((t) => t.term_id === id);
+  const old = (cur2 && cur2.name) || id.slice(0, 6);
+  const name = prompt('重命名终端（最长 20 字）：', old);
+  if (!name || name.trim() === old) return;
+  try {
+    await api('terms/rename', {method: 'POST', body: {term_id: id, name: name.trim()}});
+    refreshTermList();
+  } catch (e) {
+    if (e.message !== 'unauthorized' && e.message !== 'csrf') showBanner(e.message);
+  }
+}
+$('term-rename').addEventListener('click', () => renameTerm(termId));
 
 function initTerm() {
   if (term) return;
@@ -374,13 +487,27 @@ function connectTerm() {
       termId = m.term_id;
       localStorage.setItem('cc_term_id', termId);
       if (m.history) term.write(m.history);
-      setTermStatus('已连接 · ' + termId);
+      setTermStatus('已连接 · ' + (m.name || termId.slice(0, 6)));
+      refreshTermList();
     } else if (m.type === 'output') {
       term.write(m.data);
     } else if (m.type === 'exit') {
-      setTermStatus('进程已退出 — 点「新终端」重开');
-      termId = '';
-      localStorage.removeItem('cc_term_id');
+      setTermStatus('有终端进程已退出');
+      setTimeout(() => {            // 当前终端死了就自动切到第一个活着的，否则新建
+        api('terms').then((d) => {
+          const alive = (d && d.terms) ? d.terms : [];
+          if (!alive.length) {
+            termId = '';
+            localStorage.removeItem('cc_term_id');
+            if (term) term.reset();
+            if (sock.readyState === 1) {
+              sock.send(JSON.stringify({action: 'attach', term_id: null, rows: term.rows, cols: term.cols}));
+            }
+          } else if (!alive.some((t) => t.term_id === termId)) {
+            switchTerm(alive[0].term_id);
+          }
+        }).catch(() => {});
+      }, 300);
     }
   };
   sock.onclose = () => {
@@ -418,6 +545,7 @@ function switchView(name) {
   if (isMonitor) setTimeout(layoutMsgbar, 0);
   if (name === 'term') {
     initTerm();
+    refreshTermList();
     if (!ws || ws.readyState > 1) connectTerm();
     setTimeout(onTermResize, 50);
   } else if (name === 'send') {
@@ -450,6 +578,7 @@ function startApp() {
   setInterval(pollOverview, 10000);
   setInterval(pollMsgs, 2000);
   setInterval(pollStatus, 2000);
+  setInterval(refreshTermList, 15000);   // 多终端列表定期刷新
   if (sessions.length && !cur) { cur = sessions[0].sessionId; resetView(); }
 }
 

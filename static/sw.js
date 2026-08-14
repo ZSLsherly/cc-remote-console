@@ -1,5 +1,5 @@
 /* Service Worker：vendor 静态资源缓存优先，应用文件网络优先（保证更新及时可见） */
-const CACHE = 'ccconsole-v4';
+const CACHE = 'ccconsole-v5';
 const PRECACHE = [
   '/static/vendor/xterm.js',
   '/static/vendor/xterm.css',

@@ -213,6 +213,7 @@ class Handler(BaseHTTPRequestHandler):
     auth = None
     store = None
     send_manager = None
+    term_manager = None
     cfg = None
 
     # ---- 基础工具 ----
@@ -308,7 +309,20 @@ class Handler(BaseHTTPRequestHandler):
                     after = int(q.get("after", ["0"])[0])
                 except ValueError:
                     after = 0
-                self._json(self.store.messages(sid, after))
+                limit = None
+                if "limit" in q:
+                    try:
+                        limit = int(q["limit"][0])
+                    except ValueError:
+                        limit = None
+                self._json(self.store.messages(sid, after, limit))
+            elif path == "/api/terms":
+                if not self._authed():
+                    return self._json({"error": "未登录"}, 401)
+                if self.term_manager is not None:
+                    self._json({"terms": self.term_manager.list_sessions()})
+                else:
+                    self._json({"terms": []})
             elif path == "/api/status":
                 if not self._authed():
                     return self._json({"error": "未登录"}, 401)
@@ -373,6 +387,13 @@ class Handler(BaseHTTPRequestHandler):
                 if self.send_manager is None:
                     return self._json({"error": "claude 不可用，发送功能未启用"}, 503)
                 return self._json(self.send_manager.stop(self._ip()))
+            if path == "/api/terms/rename":
+                if self.term_manager is None:
+                    return self._json({"ok": False, "error": "终端服务未启用"}, 503)
+                body = self._read_json()
+                resp = self.term_manager.rename(
+                    body.get("term_id", ""), body.get("name", ""))
+                return self._json(resp, 200 if resp.get("ok") else 400)
             return self._json({"error": "not found"}, 404)
         except (BrokenPipeError, ConnectionResetError):
             pass
@@ -461,6 +482,7 @@ def main():
     argv = [bash, "-l", "-i"] if bash else ["cmd.exe"]
     term_manager = TerminalManager(argv, os.path.expanduser("~"),
                                    ttl_minutes=cfg["terminal_idle_minutes"])
+    Handler.term_manager = term_manager
     term_ws = wsmod.TermWS(term_manager, lambda cookies: auth.check(cookies.get(SESSION_COOKIE)),
                            auth.audit)
     wsmod.start(bind, ws_port, term_ws)

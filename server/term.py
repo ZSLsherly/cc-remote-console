@@ -24,6 +24,7 @@ class TerminalSession:
         self.lock = threading.Lock()
         self.alive = True
         self.last_active = time.time()
+        self.name = term_id[:6]   # 显示名，可重命名
         self.on_exit = None       # 由 manager 注入清理回调
         self.proc = winpty.PtyProcess.spawn(
             argv, cwd=cwd, env=env, dimensions=(rows, cols))
@@ -92,7 +93,9 @@ class TerminalSession:
 
     def is_idle(self, ttl_seconds):
         with self.lock:
-            return self.alive and (time.time() - self.last_active) > ttl_seconds
+            if not self.alive or self.clients:
+                return False          # 有客户端连着就不回收
+            return (time.time() - self.last_active) > ttl_seconds
 
 
 class TerminalManager:
@@ -121,6 +124,41 @@ class TerminalManager:
         with self.lock:
             s = self.sessions.get(term_id)
         return s if s and s.alive else None
+
+    def list_sessions(self):
+        """多终端标签用：存活会话列表（按最后活动时间排序，最活跃在前）"""
+        now = time.time()
+        out = []
+        with self.lock:
+            for s in self.sessions.values():
+                if not s.alive:
+                    continue
+                with s.lock:
+                    last = s.last_active
+                    name = s.name
+                out.append({"term_id": s.term_id, "name": name,
+                            "idle_seconds": int(now - last)})
+        out.sort(key=lambda x: x["idle_seconds"])
+        return out
+
+    def rename(self, term_id, name):
+        """重命名终端（最长 20 字）"""
+        name = (name or "").strip()[:20]
+        if not name:
+            return {"ok": False, "error": "名称不能为空"}
+        s = self.get(term_id)
+        if s is None:
+            return {"ok": False, "error": "终端不存在或已退出"}
+        with s.lock:
+            s.name = name
+        return {"ok": True, "name": name}
+
+    def list_sessions(self):
+        """存活终端列表（供前端切换/关闭）"""
+        with self.lock:
+            return [{"term_id": s.term_id, "rows": s.rows, "cols": s.cols,
+                     "clients": len(s.clients)}
+                    for s in list(self.sessions.values()) if s.alive]
 
     def _create(self, term_id, rows, cols):
         s = TerminalSession(term_id, self.argv, self.cwd,

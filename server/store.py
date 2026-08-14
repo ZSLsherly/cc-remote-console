@@ -249,15 +249,19 @@ class Store:
         out.sort(key=lambda x: x["lastTs"] or "", reverse=True)
         return {"sessions": out}
 
-    def messages(self, sid, after):
+    def messages(self, sid, after, limit=None):
         with self.lock:
             s = self.sessions.get(sid)
             if s is None:
                 return {"messages": [], "total": 0}
             msgs = s.messages
+            total = len(msgs)
+            seg = msgs[after:]
+            if limit is not None:
+                seg = seg[:limit]
             return {
-                "messages": msgs[after:],
-                "total": len(msgs),
+                "messages": seg,
+                "total": total,
                 "title": s.title or s.fallback_title(),
                 "cwd": s.cwd,
                 "branch": s.git_branch,

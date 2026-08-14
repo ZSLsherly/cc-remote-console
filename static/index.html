@@ -50,8 +50,11 @@
         <span class="chip">📱 发消息</span>
         <span id="phonenote"></span>
       </div>
-      <div id="msglist"></div>
-      <div id="msgbar"><div id="msgbar-thumb"></div></div>
+      <div id="msgshell">
+        <div id="msglist"></div>
+        <button id="earlier" class="hidden">▲ 查看更早消息</button>
+        <div id="msgbar"><div id="msgbar-thumb"></div></div>
+      </div>
       <button id="tobottom" class="hidden" title="回到底部">↓ 底部</button>
       <div id="banner"></div>
       <div id="sendbar" class="hidden">
@@ -67,7 +70,12 @@
       <div class="term-toolbar">
         <span id="term-status">未连接</span>
         <button id="term-focus">⌨ 键盘</button>
-        <button id="term-new">新终端</button>
+        <button id="term-new">＋新终端</button>
+      </div>
+      <div class="term-selrow">
+        <select id="term-sel"></select>
+        <button id="term-rename" title="重命名当前终端">✎</button>
+        <button id="term-close" title="关闭当前终端">✕</button>
       </div>
       <div id="term-hint">点击下方终端区域唤出键盘</div>
       <div id="terminal"></div>
