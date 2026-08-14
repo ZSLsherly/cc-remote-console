@@ -125,22 +125,6 @@ class TerminalManager:
             s = self.sessions.get(term_id)
         return s if s and s.alive else None
 
-    def list_sessions(self):
-        """多终端标签用：存活会话列表（按最后活动时间排序，最活跃在前）"""
-        now = time.time()
-        out = []
-        with self.lock:
-            for s in self.sessions.values():
-                if not s.alive:
-                    continue
-                with s.lock:
-                    last = s.last_active
-                    name = s.name
-                out.append({"term_id": s.term_id, "name": name,
-                            "idle_seconds": int(now - last)})
-        out.sort(key=lambda x: x["idle_seconds"])
-        return out
-
     def rename(self, term_id, name):
         """重命名终端（最长 20 字）"""
         name = (name or "").strip()[:20]
@@ -154,11 +138,22 @@ class TerminalManager:
         return {"ok": True, "name": name}
 
     def list_sessions(self):
-        """存活终端列表（供前端切换/关闭）"""
+        """存活终端列表：名称 + 活跃时长 + 尺寸 + 连接数（供前端下拉切换/关闭/重命名展示）"""
+        now = time.time()
+        out = []
         with self.lock:
-            return [{"term_id": s.term_id, "rows": s.rows, "cols": s.cols,
-                     "clients": len(s.clients)}
-                    for s in list(self.sessions.values()) if s.alive]
+            for s in self.sessions.values():
+                if not s.alive:
+                    continue
+                with s.lock:
+                    last = s.last_active
+                    name = s.name
+                out.append({"term_id": s.term_id, "name": name,
+                            "idle_seconds": int(now - last),
+                            "rows": s.rows, "cols": s.cols,
+                            "clients": len(s.clients)})
+        out.sort(key=lambda x: x["idle_seconds"])
+        return out
 
     def _create(self, term_id, rows, cols):
         s = TerminalSession(term_id, self.argv, self.cwd,
