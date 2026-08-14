@@ -476,7 +476,13 @@ def main():
 
     threading.Thread(target=poll_loop, daemon=True).start()
 
-    server = Server((bind, http_port), Handler)
+    try:
+        server = Server((bind, http_port), Handler)
+    except OSError as e:
+        print(f"[错误] 端口 {http_port} 被占用，无法启动（{e}）")
+        print("说明服务很可能已在运行：直接访问 http://localhost:%d 即可，无需重复启动。" % http_port)
+        print("如果确认没有旧窗口在运行，请重启电脑后重试。")
+        sys.exit(1)
     ip = lan_ip()
     print("=" * 56)
     print("CC 远程控制台 v2 已启动")
