@@ -32,7 +32,7 @@ from send import SendManager
 from store import Store
 from term import TerminalManager
 import ws as wsmod
-from webutil import find_bash, lan_ip, resolve_claude, stop_tui, windows_toast
+from webutil import find_bash, lan_ip, resolve_claude, windows_toast
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
@@ -395,13 +395,33 @@ class Handler(BaseHTTPRequestHandler):
                 pids = self.store.tui_pids(sid)
                 if not pids:
                     return self._json({"ok": True, "stopped": 0,
-                                       "note": "电脑端没有在该会话运行，无需终止"})
-                results = [stop_tui(p) for p in pids]   # 优雅 Ctrl+C → 兜底强杀
-                self.auth.audit("手机终止电脑端", f"session={sid[:8]} pids={pids} how={results}",
+                                       "note": "电脑端没有在该会话运行，无需打断"})
+                stopped = []
+                unreachable = []
+                for p in pids:   # 只优雅打断（Ctrl+C 语义），绝不关闭电脑端进程
+                    term_id = (self.term_manager.interrupt_descendant(p)
+                               if self.term_manager is not None else None)
+                    (stopped if term_id else unreachable).append(
+                        {"pid": p, "term_id": term_id})
+                self.auth.audit("手机打断电脑端",
+                                f"session={sid[:8]} stopped={stopped} unreachable={unreachable}",
                                 self._ip())
-                windows_toast("⛔ 电脑端 CC 已被手机终止",
-                              f"会话 {sid[:8]} 的电脑端进程已关闭（{results}）")
-                return self._json({"ok": True, "stopped": len(pids), "how": results})
+                if stopped:
+                    windows_toast("⏹ 手机打断电脑端任务",
+                                  f"会话 {sid[:8]} 的电脑端 CC 已收到 Ctrl+C（窗口保留）")
+                if stopped and not unreachable:
+                    return self._json({"ok": True, "stopped": len(stopped),
+                                       "note": "已向电脑端 CC 发送 Ctrl+C，当前任务已打断（窗口保留）"})
+                if unreachable and not stopped:
+                    return self._json({"ok": True, "stopped": 0, "unreachable": True,
+                                       "note": "电脑端 CC 不在网页终端内运行，无法优雅打断"
+                                               "（Windows 不允许向外部终端注入 Ctrl+C）。"
+                                               "请在电脑端自行按 Ctrl+C；或把电脑端 CC 开到"
+                                               "网页「终端」标签页，手机即可随时打断"})
+                return self._json({"ok": True, "stopped": len(stopped),
+                                   "unreachable": True,
+                                   "note": f"已打断 {len(stopped)} 个网页终端内的任务；"
+                                           f"另有 {len(unreachable)} 个外部终端实例无法优雅打断"})
             if path == "/api/terms/rename":
                 if self.term_manager is None:
                     return self._json({"ok": False, "error": "终端服务未启用"}, 503)

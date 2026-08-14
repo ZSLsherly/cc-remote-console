@@ -396,11 +396,11 @@ $('btn').addEventListener('click', () => {
     showBanner('已强制停止任务，可重新发送');
     return;
   }
-  if (curRunning) {   // 手机终止电脑端：先 Ctrl+C 优雅中断，不行就强杀电脑端 CC 窗口
-    if (!confirm('确定终止电脑端 CC？该会话的电脑端窗口将被关闭，会话内容保留在磁盘')) return;
+  if (curRunning) {   // 手机打断电脑端：向电脑端 CC 发 Ctrl+C（等同电脑上按一次 Ctrl+C，窗口保留）
+    if (!confirm('确定打断电脑端当前任务？（等同按 Ctrl+C，不关闭窗口）')) return;
     api('stop-pc', {method: 'POST', body: {sessionId: cur}}).then((d) => {
-      showBanner(d && d.stopped ? '已终止电脑端 CC，现在可发送'
-        : ((d && d.note) || '电脑端没有在该会话运行'));
+      if (d && d.stopped) { showBanner('已打断电脑端任务（窗口保留）'); return; }
+      showBanner((d && d.note) || '电脑端没有在该会话运行', 12000);
     }).catch((e) => {
       if (e.message !== 'unauthorized' && e.message !== 'csrf') showBanner(e.message);
     });

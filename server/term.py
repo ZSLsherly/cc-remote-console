@@ -12,6 +12,8 @@ import time
 
 import winpty
 
+from webutil import win_proc_tree
+
 RING_SIZE = 3000          # 环形缓冲行数（重连回放上限）
 
 
@@ -154,6 +156,34 @@ class TerminalManager:
                             "clients": len(s.clients)})
         out.sort(key=lambda x: x["idle_seconds"])
         return out
+
+    def session_root_pids(self):
+        """{term_id: shell 进程 pid}（供进程树祖先匹配，判断 CC 是否跑在本终端里）"""
+        with self.lock:
+            return {s.term_id: s.proc.pid for s in self.sessions.values() if s.alive}
+
+    def interrupt_descendant(self, pid):
+        """若进程 pid 的祖先链经过某个终端会话的 shell，则向该终端发 Ctrl+C（优雅打断）
+
+        返回打断的 term_id；不在任何网页终端内返回 None（外部终端无法注入，由调用方提示）。
+        """
+        tree = win_proc_tree()
+        if not tree:
+            return None
+        roots = {}
+        for term_id, root_pid in self.session_root_pids().items():
+            roots[root_pid] = term_id
+        cur = int(pid)
+        seen = set()
+        while cur and cur not in seen:
+            seen.add(cur)
+            if cur in roots:          # 进程本身或任一祖先命中终端 shell
+                s = self.get(roots[cur])
+                if s:
+                    s.write("\x03")
+                    return roots[cur]
+            cur = tree.get(cur)
+        return None
 
     def _create(self, term_id, rows, cols):
         s = TerminalSession(term_id, self.argv, self.cwd,

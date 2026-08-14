@@ -73,33 +73,37 @@ def pid_alive(pid):
         return False
 
 
-def stop_tui(pid):
-    """手机端强制终止电脑端的交互式 CC：
+_PROC_TREE_CACHE = {"ts": 0, "tree": None}
 
-    先尝试向它所在的控制台发送 Ctrl+C（优雅中断当前生成，保留窗口）；
-    2.5 秒后进程仍存活则 taskkill 强杀进程树（关闭电脑端 CC 窗口）。
-    返回 'ctrl-c' | 'force' | 'failed'。
+
+def win_proc_tree():
+    """Windows 进程树 {pid: parent_pid}（PowerShell CIM，5 秒缓存）
+
+    用于判断某个 CC 进程是否跑在我们的网页终端里（祖先链匹配终端 shell pid），
+    从而决定能否向它投递 Ctrl+C。外部终端（Windows Terminal 等）无法注入，
+    实测 AttachConsole/GenerateConsoleCtrlEvent 对这类终端无效。
     """
-    pid = int(pid)
+    now = time.time()
+    if _PROC_TREE_CACHE["tree"] is not None and now - _PROC_TREE_CACHE["ts"] < 5:
+        return _PROC_TREE_CACHE["tree"]
+    tree = {}
+    ps = ("Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId "
+          "| ConvertTo-Json -Compress")
     try:
-        import ctypes
-        kernel32 = ctypes.windll.kernel32
-        kernel32.FreeConsole()                      # 本服务进程先脱离自己的控制台
-        if kernel32.AttachConsole(pid):             # 挂到目标 CC 所在控制台
-            kernel32.SetConsoleCtrlHandler(None, True)  # 保护本进程不被 Ctrl+C 波及
-            kernel32.GenerateConsoleCtrlEvent(0, 0)     # 0 = 发给该控制台全部进程
-            kernel32.FreeConsole()
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+            capture_output=True, timeout=20, creationflags=subprocess.CREATE_NO_WINDOW)
+        import json
+        items = json.loads(r.stdout.decode("utf-8", errors="replace"))
+        if isinstance(items, dict):
+            items = [items]
+        for e in items:
+            tree[int(e["ProcessId"])] = int(e["ParentProcessId"])
     except Exception:
         pass
-    time.sleep(2.5)
-    if pid_alive(pid):
-        try:
-            subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)],
-                           capture_output=True, timeout=15)
-            return "force"
-        except Exception:
-            return "failed"
-    return "ctrl-c"
+    _PROC_TREE_CACHE["ts"] = time.time()
+    _PROC_TREE_CACHE["tree"] = tree
+    return tree
 
 
 def windows_toast(title, body):
