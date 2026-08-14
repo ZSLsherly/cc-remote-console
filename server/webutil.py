@@ -59,6 +59,19 @@ def find_bash():
     return None
 
 
+def pid_alive(pid):
+    """Windows 进程存活探测（OpenProcess SYNCHRONIZE，无需句柄权限）"""
+    try:
+        import ctypes
+        h = ctypes.windll.kernel32.OpenProcess(0x100000, False, int(pid))
+        if not h:
+            return False
+        ctypes.windll.kernel32.CloseHandle(h)
+        return True
+    except Exception:
+        return False
+
+
 def windows_toast(title, body):
     """Windows 系统通知（PowerShell + Windows.UI.Notifications，零依赖）
 

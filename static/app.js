@@ -89,11 +89,11 @@ const PAGE = 300;          // 长会话分页：首屏只加载最新 300 条
 let base = 0;              // 已加载消息中最早的索引（0 = 已加载全部）
 let unseen = 0;            // 上翻期间累计的新消息数
 
-function showBanner(txt) {
+function showBanner(txt, ms) {
   const b = $('banner');
   b.textContent = txt; b.style.display = 'block';
   clearTimeout(bannerTimer);
-  bannerTimer = setTimeout(() => { b.style.display = 'none'; }, 6000);
+  bannerTimer = setTimeout(() => { b.style.display = 'none'; }, ms || 6000);
 }
 
 function msgEl(m) {
@@ -258,7 +258,7 @@ function applyMeta(s) {
       note.textContent = '发送功能未启用（服务端未找到 claude）';
       note.className = 'off';
     } else if (s.running) {
-      note.textContent = '⚠️ 该会话正在电脑上运行，暂不能发送（停止后约 1 分钟可发）';
+      note.textContent = '⚠️ 电脑端正在该会话中处理任务，稍后再发（自动恢复）';
       note.className = 'off';
     } else {
       note.textContent = '消息会在所选会话中自动执行，请只发送可信任务';
@@ -367,7 +367,12 @@ async function sendMsg() {
   const t = $('inp').value.trim();
   if (!t || !cur) return;
   try {
-    await api('send', {method: 'POST', body: {text: t, sessionId: cur}});
+    const d = await api('send', {method: 'POST', body: {text: t, sessionId: cur}});
+    if (d && d.help) {                      // /help：展示帮助列表，保留输入框
+      showBanner(d.help, 12000);
+      return;
+    }
+    if (d && d.note) showBanner(d.note, 8000);   // /clear 等命令的结果说明
     $('inp').value = '';
   } catch (e) {
     if (e.message !== 'unauthorized' && e.message !== 'csrf') showBanner(e.message);

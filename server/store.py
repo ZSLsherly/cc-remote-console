@@ -9,12 +9,16 @@ import threading
 import time
 from datetime import datetime
 
-from webutil import truncate
+from webutil import pid_alive, truncate
 
 RESULT_TRUNC = 2000      # 工具结果最大显示长度
 SUMMARY_TRUNC = 300      # 工具入参摘要最大显示长度
-RUNNING_WINDOW = 60      # 最后活动 N 秒内视为"运行中"
+RUNNING_WINDOW = 60      # 最后活动 N 秒内视为"运行中"（sessions 目录缺失时的回退）
 POLL_INTERVAL = 1.0      # 文件扫描间隔（秒）
+
+# CC 2.1+ 每个运行中的实例会在 ~/.claude/sessions/<pid>.json 登记当前会话/忙闲，
+# 会话切换即时更新、进程退出即删除 —— 比"最近 60 秒有写入"精确得多。
+SESSIONS_DIR = os.path.join(os.path.expanduser("~"), ".claude", "sessions")
 
 # 系统噪音块：task-notification 等工具通知不该显示为聊天消息
 NOISE_PREFIXES = ("<task-notification>", "<local-command-stdout>",
@@ -231,8 +235,54 @@ class Store:
                 s.poll()
         return new_sessions
 
+    # ---- 交互式 CC 实例状态（~/.claude/sessions/*.json） ----
+    def _tui_state(self):
+        """返回 (tui, headless)：
+        tui      = {sid: busy}   交互式实例（电脑 CC 窗口）当前所在会话及是否在生成
+        headless = {sid}         无头 -p 实例（手机发送/脚本）：CC 内部队列会串行它们，无需拦截
+        仅统计进程仍存活的条目；目录不存在（旧版 CC）时返回 (None, None) 由调用方回退。
+        """
+        try:
+            files = os.listdir(SESSIONS_DIR)
+        except OSError:
+            return None, None
+        tui, headless = {}, set()
+        for fn in files:
+            if not fn.endswith(".json"):
+                continue
+            try:
+                with open(os.path.join(SESSIONS_DIR, fn), encoding="utf-8") as f:
+                    d = json.load(f)
+            except (OSError, ValueError):
+                continue
+            if d.get("kind") != "interactive":
+                continue
+            pid = d.get("pid")
+            if not pid or not pid_alive(pid):
+                continue
+            sid = d.get("sessionId")
+            if not sid:
+                continue
+            if d.get("entrypoint") == "sdk-cli":
+                headless.add(sid)
+            else:
+                tui[sid] = tui.get(sid, False) or (d.get("status") == "busy")
+        return tui, headless
+
+    @staticmethod
+    def _running(s, tui, headless):
+        recent = bool(s.last_ts) and (time.time() - s.last_ts) < RUNNING_WINDOW
+        if tui is None:
+            return recent                    # 旧版 CC 无 sessions 目录：退回活动窗口
+        if tui.get(s.sid):
+            return True                      # 电脑交互 CC 正在该会话中生成
+        if s.sid in headless:
+            return False                     # 无头实例在写：队列串行，不视为占用
+        return recent
+
     def overview(self):
         now = time.time()
+        tui, headless = self._tui_state()
         out = []
         with self.lock:
             for s in self.sessions.values():
@@ -244,12 +294,13 @@ class Store:
                     "branch": s.git_branch,
                     "lastTs": s.last_iso,
                     "msgCount": len(s.messages),
-                    "running": bool(s.last_ts) and (now - s.last_ts) < RUNNING_WINDOW,
+                    "running": self._running(s, tui, headless),
                 })
         out.sort(key=lambda x: x["lastTs"] or "", reverse=True)
         return {"sessions": out}
 
     def messages(self, sid, after, limit=None):
+        tui, headless = self._tui_state()
         with self.lock:
             s = self.sessions.get(sid)
             if s is None:
@@ -265,17 +316,35 @@ class Store:
                 "title": s.title or s.fallback_title(),
                 "cwd": s.cwd,
                 "branch": s.git_branch,
-                "running": bool(s.last_ts) and (time.time() - s.last_ts) < RUNNING_WINDOW,
+                "running": self._running(s, tui, headless),
             }
 
     def session_info(self, sid):
-        """发送管理器用：会话是否正在运行 + 工作目录（供 --resume 续聊时使用）"""
+        """发送管理器用：运行状态 + 交互实例占用情况 + 工作目录"""
+        tui, headless = self._tui_state()
         with self.lock:
             s = self.sessions.get(sid)
         if s is None:
-            return {"running": False, "cwd": None, "title": None}
+            return {"running": False, "tuiInSession": False, "tuiBusy": False,
+                    "cwd": None, "title": None}
         return {
-            "running": bool(s.last_ts) and (time.time() - s.last_ts) < RUNNING_WINDOW,
+            "running": self._running(s, tui, headless),
+            "tuiInSession": sid in (tui or {}),    # 电脑 CC 窗口正停留在这个会话（/clear 需避开）
+            "tuiBusy": bool((tui or {}).get(sid)), # 电脑 CC 正在该会话中生成回复
             "cwd": s.cwd,
             "title": s.title or s.fallback_title(),
         }
+
+    def reset_session(self, sid):
+        """手机端 /clear：清空内存中的解析状态（transcript 文件由发送管理器备份重建）"""
+        with self.lock:
+            s = self.sessions.get(sid)
+            if s is None:
+                return False
+            s.messages = []
+            s.cursor = 0
+            s.partial = b""
+            s.title = None
+            s.last_ts = None
+            s.last_iso = None
+            return True

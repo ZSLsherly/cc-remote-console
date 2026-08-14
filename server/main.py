@@ -468,11 +468,19 @@ def main():
     claude_exe = resolve_claude()
     send_manager = None
     if claude_exe:
+        def session_check(sid):
+            info = store.session_info(sid)
+            # 手机自己刚写完该会话（60 秒活动窗口来自手机）不算"电脑占用"
+            if info.get("running") and send_manager.finished_recently(sid):
+                info["running"] = False
+            return info
+
         send_manager = SendManager(
             root, claude_exe, auth.audit,
             notify=windows_toast,                          # 手机活动弹窗到电脑
-            session_check=lambda sid: store.session_info(sid),   # 任意会话可发送
-            default_cwd=os.path.expanduser("~"))
+            session_check=session_check,                   # 任意会话可发送
+            default_cwd=os.path.expanduser("~"),
+            on_cleared=store.reset_session)                # /clear 后重置监视端状态
         Handler.send_manager = send_manager
     else:
         print("[警告] 未找到 claude 命令，手机发送功能禁用（监控与终端仍可用）")
