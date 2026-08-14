@@ -79,12 +79,13 @@ main { flex: 1; overflow: hidden; position: relative; }
   scrollbar-width: none; }
 #msglist::-webkit-scrollbar { display: none; }
 
-/* ---- 自绘滚动条 ---- */
-#msgbar { position: absolute; right: 2px; width: 8px; border-radius: 4px; z-index: 18;
-  background: rgba(163,230,53,.06); display: none; }
-#msgbar-thumb { position: absolute; left: 1px; right: 1px; top: 0; border-radius: 3px;
-  background: rgba(163,230,53,.55); box-shadow: 0 0 6px rgba(163,230,53,.35);
-  min-height: 26px; touch-action: none; cursor: grab; }
+/* ---- 自绘滚动条（浏览器式：整条右缘可抓取拖动） ---- */
+#msgbar { position: absolute; right: 0; width: 20px; z-index: 18; display: none;
+  touch-action: none; cursor: pointer;
+  background: linear-gradient(90deg, transparent, rgba(163,230,53,.06)); }
+#msgbar-thumb { position: absolute; left: 7px; right: 6px; top: 0; border-radius: 4px;
+  background: linear-gradient(180deg, rgba(163,230,53,.9), rgba(163,230,53,.45));
+  box-shadow: 0 0 10px rgba(163,230,53,.45); min-height: 44px; touch-action: none; }
 #tobottom { position: fixed; right: 14px; bottom: 86px; z-index: 19;
   background: var(--card); color: var(--accent); border: 1px solid var(--accent);
   border-radius: 18px; padding: 7px 14px; font-size: 13px; font-weight: 600;

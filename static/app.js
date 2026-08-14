@@ -181,26 +181,26 @@ function layoutMsgbar() {
   updateMsgThumb();
 }
 let thumbDrag = null;
-$('msgbar-thumb').addEventListener('pointerdown', (e) => {
+function scrollRatioAt(e) {   // 触点位置对应的滚动比例（浏览器式：滑块中心跟手）
+  const r = $('msgbar').getBoundingClientRect();
+  const th = $('msgbar-thumb').offsetHeight;
+  const usable = Math.max(1, r.height - th);
+  return Math.max(0, Math.min(1, (e.clientY - r.top - th / 2) / usable));
+}
+$('msgbar').addEventListener('pointerdown', (e) => {   // 整条右缘都可抓：按下即定位并开始拖动
   const el = $('msglist');
-  thumbDrag = { y: e.clientY, top: el.scrollTop, h: el.clientHeight, sh: el.scrollHeight };
-  try { $('msgbar-thumb').setPointerCapture(e.pointerId); } catch (err) {}
+  thumbDrag = { sh: el.scrollHeight, ch: el.clientHeight };
+  try { $('msgbar').setPointerCapture(e.pointerId); } catch (err) {}
   e.preventDefault();
+  el.scrollTop = scrollRatioAt(e) * (thumbDrag.sh - thumbDrag.ch);
 });
-$('msgbar-thumb').addEventListener('pointermove', (e) => {
+$('msgbar').addEventListener('pointermove', (e) => {
   if (!thumbDrag) return;
   const el = $('msglist');
-  el.scrollTop = thumbDrag.top + (e.clientY - thumbDrag.y) / thumbDrag.h * (thumbDrag.sh - thumbDrag.h);
+  el.scrollTop = scrollRatioAt(e) * (thumbDrag.sh - thumbDrag.ch);
 });
-$('msgbar-thumb').addEventListener('pointerup', () => { thumbDrag = null; });
-$('msgbar-thumb').addEventListener('pointercancel', () => { thumbDrag = null; });
-$('msgbar').addEventListener('pointerdown', (e) => {   // 点轨道空白处：跳到对应位置
-  if (e.target === $('msgbar-thumb')) return;
-  const el = $('msglist');
-  const r = $('msgbar').getBoundingClientRect(), th = $('msgbar-thumb').offsetHeight;
-  const ratio = (e.clientY - r.top - th / 2) / Math.max(1, r.height - th);
-  el.scrollTop = Math.max(0, Math.min(1, ratio)) * (el.scrollHeight - el.clientHeight);
-});
+$('msgbar').addEventListener('pointerup', () => { thumbDrag = null; });
+$('msgbar').addEventListener('pointercancel', () => { thumbDrag = null; });
 window.addEventListener('resize', layoutMsgbar);
 window.addEventListener('orientationchange', () => setTimeout(layoutMsgbar, 300));
 
