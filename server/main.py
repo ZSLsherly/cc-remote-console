@@ -32,7 +32,7 @@ from send import SendManager
 from store import Store
 from term import TerminalManager
 import ws as wsmod
-from webutil import find_bash, lan_ip, resolve_claude, windows_toast
+from webutil import find_bash, lan_ip, resolve_claude, stop_tui, windows_toast
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
@@ -387,6 +387,21 @@ class Handler(BaseHTTPRequestHandler):
                 if self.send_manager is None:
                     return self._json({"error": "claude 不可用，发送功能未启用"}, 503)
                 return self._json(self.send_manager.stop(self._ip()))
+            if path == "/api/stop-pc":
+                body = self._read_json()
+                sid = body.get("sessionId", "")
+                if not sid:
+                    return self._json({"ok": False, "error": "缺少会话 ID"}, 400)
+                pids = self.store.tui_pids(sid)
+                if not pids:
+                    return self._json({"ok": True, "stopped": 0,
+                                       "note": "电脑端没有在该会话运行，无需终止"})
+                results = [stop_tui(p) for p in pids]   # 优雅 Ctrl+C → 兜底强杀
+                self.auth.audit("手机终止电脑端", f"session={sid[:8]} pids={pids} how={results}",
+                                self._ip())
+                windows_toast("⛔ 电脑端 CC 已被手机终止",
+                              f"会话 {sid[:8]} 的电脑端进程已关闭（{results}）")
+                return self._json({"ok": True, "stopped": len(pids), "how": results})
             if path == "/api/terms/rename":
                 if self.term_manager is None:
                     return self._json({"ok": False, "error": "终端服务未启用"}, 503)

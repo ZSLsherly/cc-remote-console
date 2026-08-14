@@ -335,6 +335,30 @@ class Store:
             "title": s.title or s.fallback_title(),
         }
 
+    def tui_pids(self, sid):
+        """该会话上存活的交互式 CC 进程 pid 列表（电脑端窗口，供手机端强制终止）"""
+        try:
+            files = os.listdir(SESSIONS_DIR)
+        except OSError:
+            return []
+        pids = []
+        for fn in files:
+            if not fn.endswith(".json"):
+                continue
+            try:
+                with open(os.path.join(SESSIONS_DIR, fn), encoding="utf-8") as f:
+                    d = json.load(f)
+            except (OSError, ValueError):
+                continue
+            if d.get("kind") != "interactive" or d.get("sessionId") != sid:
+                continue
+            if d.get("entrypoint") == "sdk-cli":
+                continue
+            pid = d.get("pid")
+            if pid and pid_alive(pid):
+                pids.append(pid)
+        return pids
+
     def reset_session(self, sid):
         """手机端 /clear：清空内存中的解析状态（transcript 文件由发送管理器备份重建）"""
         with self.lock:

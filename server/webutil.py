@@ -4,6 +4,7 @@ import os
 import shutil
 import socket
 import subprocess
+import time
 
 
 def lan_ip():
@@ -70,6 +71,35 @@ def pid_alive(pid):
         return True
     except Exception:
         return False
+
+
+def stop_tui(pid):
+    """手机端强制终止电脑端的交互式 CC：
+
+    先尝试向它所在的控制台发送 Ctrl+C（优雅中断当前生成，保留窗口）；
+    2.5 秒后进程仍存活则 taskkill 强杀进程树（关闭电脑端 CC 窗口）。
+    返回 'ctrl-c' | 'force' | 'failed'。
+    """
+    pid = int(pid)
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        kernel32.FreeConsole()                      # 本服务进程先脱离自己的控制台
+        if kernel32.AttachConsole(pid):             # 挂到目标 CC 所在控制台
+            kernel32.SetConsoleCtrlHandler(None, True)  # 保护本进程不被 Ctrl+C 波及
+            kernel32.GenerateConsoleCtrlEvent(0, 0)     # 0 = 发给该控制台全部进程
+            kernel32.FreeConsole()
+    except Exception:
+        pass
+    time.sleep(2.5)
+    if pid_alive(pid):
+        try:
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)],
+                           capture_output=True, timeout=15)
+            return "force"
+        except Exception:
+            return "failed"
+    return "ctrl-c"
 
 
 def windows_toast(title, body):

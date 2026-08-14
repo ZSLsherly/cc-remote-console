@@ -82,6 +82,7 @@ $('login-form').addEventListener('submit', async (e) => {
 /* ================= 监视视图 ================= */
 let sessions = [], cur = null, msgs = [], total = 0, stick = true;
 let phoneSid = null, control = false, sending = false;
+let curRunning = false;      // 所选会话是否被电脑端 CC 占用（决定按钮是否可终止电脑端）
 let bannerTimer = null, lastErrKey = null;
 let firstRender = true;
 const PAGE = 300;          // 长会话分页：首屏只加载最新 300 条
@@ -250,10 +251,12 @@ function applyMeta(s) {
   $('status').textContent = cur === phoneSid ? '手机会话' : (s.running ? '运行中' : '空闲');
   const showBar = control;                       // 输入框常驻（不发消息即等价于监视）
   $('phonebar').classList.toggle('hidden', !control);
+  curRunning = !!s.running;
+  updateBtn();
   if (control) {
     const note = $('phonenote');
     if (s.running) {
-      note.textContent = '🟡 电脑端在该会话：电脑一执行命令就会终止手机任务';
+      note.textContent = '🟡 电脑端在该会话：点「⏹ 终止电脑端」可强制接管';
       note.className = 'on';
     } else {
       note.textContent = '支持 /clear /skills /status /model /memory /export /help 及技能调用';
@@ -342,15 +345,19 @@ async function loadEarlier() {      // 分批加载更早的历史消息
 }
 $('earlier').addEventListener('click', loadEarlier);
 
+function updateBtn() {   // 三态：发送 / ⏹ 停止（手机任务） / ⏹ 终止电脑端（强制接管会话）
+  $('btn').textContent = sending ? '⏹ 停止' : (curRunning ? '⏹ 终止电脑端' : '发送');
+  $('btn').disabled = false;
+  $('inp').disabled = false;
+}
+
 async function pollStatus() {
   const d = await api('status').catch(() => null);
   if (!d) return;
   control = d.control || false;
   phoneSid = d.phoneSessionId || null;
   sending = d.sending || false;
-  $('btn').textContent = sending ? '⏹ 停止' : '发送';
-  $('btn').disabled = false;
-  $('inp').disabled = false;
+  updateBtn();
   if (d.lastError && d.lastError !== lastErrKey) {
     lastErrKey = d.lastError;
     showBanner(d.lastError, 10000);   // 含"任务已被电脑终止"等情况
@@ -384,9 +391,19 @@ async function sendMsg() {
   }
 }
 $('btn').addEventListener('click', () => {
-  if (sending) {   // 手机强制停止：杀掉正在跑的任务，方便在外面改思路
+  if (sending) {   // 手机强制停止：杀掉正在跑的手机任务，方便在外面改思路
     api('stop', {method: 'POST'}).catch(() => {});
     showBanner('已强制停止任务，可重新发送');
+    return;
+  }
+  if (curRunning) {   // 手机终止电脑端：先 Ctrl+C 优雅中断，不行就强杀电脑端 CC 窗口
+    if (!confirm('确定终止电脑端 CC？该会话的电脑端窗口将被关闭，会话内容保留在磁盘')) return;
+    api('stop-pc', {method: 'POST', body: {sessionId: cur}}).then((d) => {
+      showBanner(d && d.stopped ? '已终止电脑端 CC，现在可发送'
+        : ((d && d.note) || '电脑端没有在该会话运行'));
+    }).catch((e) => {
+      if (e.message !== 'unauthorized' && e.message !== 'csrf') showBanner(e.message);
+    });
     return;
   }
   sendMsg();
