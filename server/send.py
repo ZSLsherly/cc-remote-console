@@ -17,16 +17,56 @@ from webutil import truncate
 SID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
-# 手机端支持的 CC 斜杠命令（无头 -p 模式下其余命令只是文本，会原样发给模型）
-SUPPORTED_COMMANDS = {
-    "/clear": "清空所选会话的对话上下文，开始全新对话（旧记录备份为 .bak 文件）",
-    "/help": "查看手机端支持的斜杠命令",
+# 手机端支持的 CC 斜杠命令
+#  原生实现：/clear /help /skills /status /model /memory /export
+#  其余 /xxx 视为 skill 调用：改写为自然语言，由模型通过技能系统执行
+#  纯交互型命令（无头模式无法执行）：给出对应替代说明
+INTERACTIVE_ONLY = {
+    "/compact": "无头模式会在上下文接近上限时自动压缩，无需手动操作；"
+                "如需立即压缩请到终端标签页运行 claude 后执行 /compact",
+    "/cost": "无头模式无法查询用量统计；请到终端标签页运行 claude 后执行 /cost",
+    "/context": "无头模式无法显示上下文窗口；请到终端标签页运行 claude 后执行 /context",
+    "/usage": "无头模式无法查询用量；请到终端标签页运行 claude 后执行 /usage",
+    "/config": "配置修改请到终端标签页运行 claude 后执行 /config",
+    "/permissions": "权限设置请到终端标签页运行 claude 后执行 /permissions",
+    "/agents": "子代理配置请到终端标签页运行 claude 后执行 /agents",
+    "/resume": "无需该命令：用顶部下拉框即可切换任意会话",
+    "/rewind": "无头模式不支持回退；需要时请到终端标签页运行 claude 后执行 /rewind",
+    "/add-dir": "无头模式不支持添加目录；需要时请到终端标签页运行 claude 后执行 /add-dir",
+    "/doctor": "诊断命令请到终端标签页运行 claude 后执行 /doctor",
+    "/terminal-setup": "请到终端标签页运行 claude 后执行 /terminal-setup",
+    "/login": "登录/账号操作请到终端标签页运行 claude 后执行",
+    "/logout": "登录/账号操作请到终端标签页运行 claude 后执行",
+    "/release-notes": "更新说明请到终端标签页运行 claude 后执行 /release-notes",
+    "/bugs": "问题上报请到终端标签页运行 claude 后执行 /bugs",
+    "/pr-comments": "PR 评论功能请到终端标签页运行 claude 后执行 /pr-comments",
+    "/init": "项目初始化请到终端标签页运行 claude 后执行 /init",
 }
+
+# DeepSeek 后端可用模型（与 bash profile 中 ANTHROPIC_MODEL / HAIKU 映射一致）
+MODELS = ["deepseek-v4-pro[1m]", "deepseek-v4-flash[1m]"]
+DEFAULT_MODEL = "deepseek-v4-pro[1m]"
+
+SKILL_DIRS = [
+    os.path.join(os.path.expanduser("~"), ".claude", "skills"),        # 个人技能
+    os.path.join(os.path.expanduser("~"), ".claude", "plugins", "cache"),  # 插件技能
+]
+
+HELP_TEXT = """手机端支持的斜杠命令：
+/help — 本列表
+/clear — 清空所选会话的上下文（旧记录备份为 .bak）
+/skills — 列出全部可用技能
+/status — 查看 claude 版本、模型后端、当前会话状态
+/model — 查看/切换模型（如 /model deepseek-v4-flash[1m]）
+/memory — 查看 CLAUDE.md 记忆内容
+/export — 把所选会话导出为 Markdown 到电脑下载目录
+/xxx — 其余以 / 开头的输入视为调用同名技能（如 /imagegen 描述文字）
+纯交互命令（/cost /config /permissions 等）会给出替代说明。"""
 
 
 class SendManager:
     def __init__(self, root, claude_exe, audit, notify=None,
-                 session_check=None, default_cwd=None, on_cleared=None):
+                 session_check=None, default_cwd=None, on_cleared=None, store=None):
         self.root = root
         self.claude_exe = claude_exe
         self.audit = audit            # audit(event, detail, ip)
@@ -34,6 +74,8 @@ class SendManager:
         self.session_check = session_check or (lambda sid: {"running": False, "cwd": None})
         self.default_cwd = default_cwd or os.path.expanduser("~")
         self.on_cleared = on_cleared  # /clear 成功后回调（重置监视端内存状态）
+        self.store = store            # /export 读取消息用
+        self._models = {}             # sid -> 模型（/model 切换后生效）
         self._lock = threading.Lock()
         self.sending = False
         self.since = None
@@ -63,6 +105,9 @@ class SendManager:
             return 400, {"error": "消息不能为空"}
         if text.startswith("/"):
             return self._command(sid, text.strip().lower(), ip)
+        return self._submit_text(sid, text, ip)
+
+    def _submit_text(self, sid, text, ip=""):
         if len(text) > 4000:
             return 400, {"error": "消息过长（最多 4000 字符）"}
         info = self.session_check(sid)
@@ -83,13 +128,16 @@ class SendManager:
         return 202, {"ok": True, "since": self.since}
 
     # ---- 斜杠命令 ----
+    @staticmethod
+    def _cmd(title, text):
+        """命令结果：前端弹窗展示"""
+        return {"ok": True, "cmd": title, "text": text}
+
     def _command(self, sid, text, ip):
-        if text == "/help":
-            lines = "手机端支持的斜杠命令："
-            for k, v in SUPPORTED_COMMANDS.items():
-                lines += f"\n{k} — {v}"
-            return 200, {"ok": True, "help": lines}
-        if text == "/clear":
+        word = text.split()[0] if text.split() else text
+        if word == "/help":
+            return 200, self._cmd("手机端命令", HELP_TEXT)
+        if word == "/clear":
             info = self.session_check(sid)
             if info.get("tuiInSession"):
                 return 423, {"error": "电脑端 CC 正停留在这个会话，切换走后再清空"}
@@ -111,8 +159,149 @@ class SendManager:
             self.notify("🧹 手机清空会话", (info.get("title") or sid[:8]) + " 的上下文已清空（旧记录在 .bak）")
             return 200, {"ok": True, "cleared": True,
                          "note": "上下文已清空，下一条消息将开启全新对话"}
-        return 400, {"error": "不支持的斜杠命令 " + text.split()[0] +
-                     "（手机端仅支持 /clear、/help；其余命令请到电脑端 CC 执行）"}
+        if word == "/skills":
+            return 200, self._cmd("可用技能", self._list_skills(sid) or "未发现任何技能")
+        if word == "/status":
+            return 200, self._cmd("运行状态", self._status_text(sid))
+        if word == "/model":
+            return self._model_cmd(sid, text)
+        if word == "/memory":
+            return 200, self._cmd("记忆内容 (CLAUDE.md)", self._memory_text(sid))
+        if word == "/export":
+            return self._export_cmd(sid, ip)
+        if word in INTERACTIVE_ONLY:
+            return 200, self._cmd(word, INTERACTIVE_ONLY[word])
+        # 其余 /xxx：视为 skill 调用，改写为自然语言让模型通过技能系统执行
+        name = word[1:]
+        rest = text[len(word):].strip()
+        if rest:
+            rewritten = f"请调用「{name}」技能完成以下要求：{rest}"
+        else:
+            rewritten = f"请调用「{name}」技能并先说明它的用途，再按技能说明执行"
+        return self._submit_text(sid, rewritten, ip)
+
+    # ---- 各命令实现 ----
+    def _list_skills(self, sid):
+        info = self.session_check(sid)
+        bases = list(SKILL_DIRS)
+        cwd = info.get("cwd")
+        if cwd:   # 项目级技能（所选会话的工作目录）
+            bases.insert(0, os.path.join(cwd, ".claude", "skills"))
+        found = {}
+        for base in bases:
+            for dirpath, dirnames, filenames in os.walk(base):
+                if "SKILL.md" not in filenames:
+                    continue
+                try:
+                    with open(os.path.join(dirpath, "SKILL.md"), encoding="utf-8") as f:
+                        head = f.read(1500)
+                except OSError:
+                    continue
+                name = os.path.basename(dirpath)
+                desc = self._skill_desc(head)
+                found[name] = desc or "（无描述）"
+        lines = [f"/{n} — {d}" for n, d in sorted(found.items())]
+        lines.append("")
+        lines.append("用法：在输入框直接以 /技能名 开头（可带要求文字），"
+                     "或直接描述任务，模型会自动选用合适的技能。")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _skill_desc(head):
+        """从 SKILL.md 头部 frontmatter 提取 description"""
+        if not head.startswith("---"):
+            return ""
+        end = head.find("\n---", 3)
+        if end < 0:
+            return ""
+        for ln in head[:end].splitlines():
+            if ln.startswith("description:"):
+                return ln[len("description:"):].strip().strip('"\'')
+        return ""
+
+    def _status_text(self, sid):
+        info = self.session_check(sid)
+        try:
+            r = subprocess.run([self.claude_exe, "--version"],
+                               capture_output=True, text=True, timeout=10,
+                               encoding="utf-8", errors="replace")
+            ver = (r.stdout or r.stderr or "").strip().splitlines()[-1]
+        except Exception:
+            ver = "未知"
+        model = self._models.get(sid, DEFAULT_MODEL)
+        return (f"claude 版本: {ver}\n"
+                f"API 后端: {os.environ.get('ANTHROPIC_BASE_URL', '未设置')}\n"
+                f"当前会话: {info.get('title') or sid[:8]} ({sid})\n"
+                f"会话模型: {model}\n"
+                f"工作目录: {info.get('cwd') or '未知'}\n"
+                f"电脑 CC 是否停留此会话: {'是' if info.get('tuiInSession') else '否'}"
+                + ("（正在生成）" if info.get('tuiBusy') else ""))
+
+    def _model_cmd(self, sid, text):
+        parts = text.split()
+        if len(parts) == 1:
+            cur = self._models.get(sid, DEFAULT_MODEL)
+            return 200, self._cmd(
+                "/model",
+                f"当前会话模型: {cur}\n可用模型:\n" +
+                "\n".join(f"  {m}" + ("（默认）" if m == DEFAULT_MODEL else "")
+                          for m in MODELS) +
+                "\n\n切换: /model <模型名>，例如 /model deepseek-v4-flash[1m]")
+        model = parts[1]
+        if model not in MODELS:
+            return 400, {"error": f"未知模型 {model}；可用: {', '.join(MODELS)}"}
+        self._models[sid] = model
+        return 200, self._cmd("/model", f"已切换会话模型为 {model}（下一条消息起生效）")
+
+    def _memory_text(self, sid):
+        info = self.session_check(sid)
+        cwd = info.get("cwd")
+        paths = [("全局", os.path.join(os.path.expanduser("~"), ".claude", "CLAUDE.md"))]
+        if cwd:
+            paths.append(("项目", os.path.join(cwd, "CLAUDE.md")))
+            paths.append(("项目 .claude", os.path.join(cwd, ".claude", "CLAUDE.md")))
+        out = []
+        for label, p in paths:
+            if os.path.isfile(p):
+                try:
+                    with open(p, encoding="utf-8") as f:
+                        out.append(f"【{label}】{p}\n" + truncate(f.read(), 3000))
+                except OSError:
+                    pass
+        if not out:
+            return "未找到任何 CLAUDE.md 记忆文件"
+        return "\n\n".join(out)
+
+    def _export_cmd(self, sid, ip):
+        info = self.session_check(sid)
+        msgs = self.store.messages(sid, 0)["messages"] if self.store else []
+        if not msgs:
+            return 200, self._cmd("/export", "该会话没有可导出的消息")
+        lines = [f"# {info.get('title') or sid}\n", f"会话: {sid}\n"]
+        for m in msgs:
+            if m.get("role") == "user":
+                if m.get("text"):
+                    lines.append(f"\n## 我\n\n{m['text']}\n")
+            elif m.get("role") == "assistant":
+                if m.get("thinking"):
+                    lines.append(f"\n> 思考: {m['thinking']}\n")
+                if m.get("text"):
+                    lines.append(f"\n## AI\n\n{m['text']}\n")
+                for t in m.get("tools") or []:
+                    lines.append(f"\n- 工具 {t['name']}: {t['summary']}"
+                                 + (f"\n  → 结果: {t['result']}" if t.get("result") else ""))
+        try:
+            dl = os.path.join(os.path.expanduser("~"), "Downloads")
+            os.makedirs(dl, exist_ok=True)
+            fn = f"cc-export-{sid[:8]}-{time.strftime('%Y%m%d-%H%M%S')}.md"
+            out = os.path.join(dl, fn)
+            with open(out, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines))
+        except OSError as e:
+            return 500, {"error": f"导出失败: {e}"}
+        self.audit("手机导出会话", f"session={sid[:8]} file={fn}", ip)
+        self.notify("📤 手机导出会话", f"{fn} 已保存到下载目录")
+        return 200, self._cmd("/export", f"已导出到:\n{out}")
 
     def _find_transcript(self, sid):
         try:
@@ -130,8 +319,12 @@ class SendManager:
     def _run(self, sid, text, cwd):
         try:
             flag = "--resume" if self._transcript_exists(sid) else "--session-id"
-            cmd = [self.claude_exe, "-p", text, flag, sid,
-                   "--permission-mode", "bypassPermissions"]
+            cmd = [self.claude_exe, "-p", text]
+            with self._lock:
+                model = self._models.get(sid)
+            if model:
+                cmd += ["--model", model]
+            cmd += [flag, sid, "--permission-mode", "bypassPermissions"]
             flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
             with self._lock:
                 self.proc = subprocess.Popen(

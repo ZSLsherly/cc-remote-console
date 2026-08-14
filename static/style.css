@@ -188,3 +188,22 @@ details.think summary, .tool summary, .att summary { cursor: pointer; }
 #err { position: fixed; top: 0; left: 0; right: 0; bottom: 0; display: flex;
   align-items: center; justify-content: center;
   color: var(--err); padding: 20px; text-align: center; }
+
+/* ---- 命令结果弹窗 ---- */
+#cmdbox { position: fixed; inset: 0; z-index: 40; display: flex;
+  align-items: center; justify-content: center; padding: 24px 14px;
+  background: rgba(4,6,3,.72); backdrop-filter: blur(3px); }
+.cmdbox-panel { width: 100%; max-width: 560px; max-height: 82vh; display: flex;
+  flex-direction: column; background: linear-gradient(180deg, var(--card), #0b0e07);
+  border: 1px solid var(--border2); border-radius: 14px; overflow: hidden;
+  box-shadow: 0 0 42px rgba(163,230,53,.12), 0 12px 32px rgba(0,0,0,.55); }
+.cmdbox-head { flex: none; display: flex; align-items: center; gap: 10px;
+  padding: 11px 14px; border-bottom: 1px solid var(--border); }
+#cmdbox-title { flex: 1; font-family: var(--mono); font-size: 14px; letter-spacing: .08em;
+  color: var(--accent); text-shadow: 0 0 10px rgba(163,230,53,.4); }
+#cmdbox-close { background: none; border: 1px solid var(--border); color: var(--dim);
+  border-radius: 8px; width: 30px; height: 30px; font-size: 14px; }
+#cmdbox-close:active { color: var(--err); border-color: var(--err); }
+#cmdbox-body { flex: 1; overflow: auto; -webkit-overflow-scrolling: touch;
+  margin: 0; padding: 12px 14px; font-family: var(--mono); font-size: 13px;
+  line-height: 1.7; color: var(--text); white-space: pre-wrap; word-break: break-all; }

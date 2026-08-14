@@ -93,10 +93,16 @@ tailscale serve --bg --set-path /term http://127.0.0.1:8766
 
 | 命令 | 效果 |
 |---|---|
-| `/clear` | 清空所选会话上下文，开启全新对话（旧记录备份为 `.jsonl.bak`） |
 | `/help` | 查看手机端支持的命令列表 |
+| `/clear` | 清空所选会话上下文，开启全新对话（旧记录备份为 `.jsonl.bak`） |
+| `/skills` | 列出全部可用技能（个人 / 插件 / 项目级） |
+| `/status` | 查看 claude 版本、API 后端、当前会话与模型 |
+| `/model` | 查看 / 切换模型（`/model deepseek-v4-flash[1m]`） |
+| `/memory` | 查看 CLAUDE.md 记忆内容 |
+| `/export` | 把所选会话导出为 Markdown 到电脑下载目录 |
+| `/任意技能名` | 视为调用同名技能（如 `/imagegen 画一只猫`），由模型通过技能系统执行；直接描述任务时模型也会自动选用合适的技能 |
 
-其余斜杠命令（`/compact`、`/model` 等）是无头模式下的交互指令，手机端无法执行，会给出明确提示；`claude -p` 会在上下文接近上限时自动压缩，无需手动 `/compact`。
+纯交互型命令（`/cost`、`/config`、`/permissions`、`/agents`、`/rewind` 等）在无头模式下无法执行，会弹出对应的替代说明。需要完整的原生命令体验时，手机「终端」标签页里运行 `claude` 即可使用全部命令（含交互选择器）；`claude -p` 会在上下文接近上限时自动压缩，无需手动 `/compact`。
 
 ## 目录结构
 

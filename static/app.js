@@ -362,14 +362,24 @@ async function pollStatus() {
   }
 }
 
+function showCmdBox(title, text) {   // 命令结果弹窗（/help /skills /status /model /memory /export）
+  $('cmdbox-title').textContent = title;
+  $('cmdbox-body').textContent = text;
+  $('cmdbox').classList.remove('hidden');
+}
+$('cmdbox').addEventListener('click', (e) => {
+  if (e.target === $('cmdbox')) $('cmdbox').classList.add('hidden');
+});
+$('cmdbox-close').addEventListener('click', () => $('cmdbox').classList.add('hidden'));
+
 async function sendMsg() {
   if (sending) return;
   const t = $('inp').value.trim();
   if (!t || !cur) return;
   try {
     const d = await api('send', {method: 'POST', body: {text: t, sessionId: cur}});
-    if (d && d.help) {                      // /help：展示帮助列表，保留输入框
-      showBanner(d.help, 12000);
+    if (d && d.cmd) {                      // 命令结果：弹窗展示，保留输入框
+      showCmdBox(d.cmd, d.text);
       return;
     }
     if (d && d.note) showBanner(d.note, 8000);   // /clear 等命令的结果说明

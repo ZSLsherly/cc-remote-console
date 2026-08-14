@@ -480,7 +480,8 @@ def main():
             notify=windows_toast,                          # 手机活动弹窗到电脑
             session_check=session_check,                   # 任意会话可发送
             default_cwd=os.path.expanduser("~"),
-            on_cleared=store.reset_session)                # /clear 后重置监视端状态
+            on_cleared=store.reset_session,                # /clear 后重置监视端状态
+            store=store)                                   # /export 读取消息
         Handler.send_manager = send_manager
     else:
         print("[警告] 未找到 claude 命令，手机发送功能禁用（监控与终端仍可用）")
