@@ -81,7 +81,7 @@ $('login-form').addEventListener('submit', async (e) => {
 
 /* ================= 监视视图 ================= */
 let sessions = [], cur = null, msgs = [], total = 0, stick = true;
-let phoneSid = null, control = false, sending = false, queued = 0;
+let phoneSid = null, control = false, sending = false;
 let bannerTimer = null, lastErrKey = null;
 let firstRender = true;
 const PAGE = 300;          // 长会话分页：首屏只加载最新 300 条
@@ -253,7 +253,7 @@ function applyMeta(s) {
   if (control) {
     const note = $('phonenote');
     if (s.running) {
-      note.textContent = '🟡 电脑端占用该会话：发送会自动排队，电脑切走后执行';
+      note.textContent = '🟡 电脑端在该会话：电脑一执行命令就会终止手机任务';
       note.className = 'on';
     } else {
       note.textContent = '支持 /clear /skills /status /model /memory /export /help 及技能调用';
@@ -348,21 +348,12 @@ async function pollStatus() {
   control = d.control || false;
   phoneSid = d.phoneSessionId || null;
   sending = d.sending || false;
-  queued = d.queued || 0;
-  if (sending) {
-    $('btn').textContent = '停止';
-    $('btn').disabled = false;
-  } else if (queued) {
-    $('btn').textContent = '取消排队(' + queued + ')';
-    $('btn').disabled = false;
-  } else {
-    $('btn').textContent = '发送';
-    $('btn').disabled = false;
-  }
+  $('btn').textContent = sending ? '⏹ 停止' : '发送';
+  $('btn').disabled = false;
   $('inp').disabled = false;
   if (d.lastError && d.lastError !== lastErrKey) {
     lastErrKey = d.lastError;
-    showBanner('发送失败：' + d.lastError);
+    showBanner(d.lastError, 10000);   // 含"任务已被电脑终止"等情况
   }
 }
 
@@ -393,9 +384,9 @@ async function sendMsg() {
   }
 }
 $('btn').addEventListener('click', () => {
-  if (sending || queued) {
+  if (sending) {   // 手机强制停止：杀掉正在跑的任务，方便在外面改思路
     api('stop', {method: 'POST'}).catch(() => {});
-    showBanner(sending ? '已停止任务' : '已取消排队');
+    showBanner('已强制停止任务，可重新发送');
     return;
   }
   sendMsg();
@@ -545,6 +536,16 @@ function retryTerm() {
   const delay = Math.min(15000, 2000 * Math.pow(1.5, wsRetry++));
   setTimeout(() => { if (wsWanted) connectTerm(); }, delay);
 }
+
+$('term-int').addEventListener('click', () => {   // 打断当前命令：发 Ctrl+C（手机键盘没有 Ctrl）
+  if (ws && ws.readyState === 1) {
+    ws.send(JSON.stringify({action: 'input', data: '\x03'}));
+    setTermStatus('已发送打断信号 (Ctrl+C)');
+    const b = $('term-int');
+    b.style.borderColor = '#ff6b5e'; b.style.color = '#ff6b5e';
+    setTimeout(() => { b.style.borderColor = ''; b.style.color = ''; }, 800);
+  }
+});
 
 $('term-new').addEventListener('click', () => {
   termId = '';

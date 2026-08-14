@@ -2,12 +2,12 @@
 """向任意 CC 会话串行发送消息（claude -p --resume）
 
 - 可对任意会话发送（手机挑中哪个会话就控制哪个）
-- 会话独占：电脑 CC 停留在某会话时，手机消息自动排队，电脑切走后自动执行
+- 电脑优先：电脑正在生成回复（busy）时手机发送被拒（423）；
+  手机任务飞行中电脑一开始执行命令（busy）就立即终止手机任务，不排队不重试
   （同一会话两实例并发会让消息穿插进同一个上下文，互相干扰）
-- 手机任务飞行中若电脑接管该会话：中止子进程并自动重试（≤2 次）
-- 全局单飞行：同一时刻只跑一个发送任务
+- 电脑只是停在会话里（未在生成/输入）不影响手机操作
+- 全局单飞行：同一时刻只跑一个发送任务；手机可随时「停止」强杀
 """
-import collections
 import os
 import re
 import subprocess
@@ -17,8 +17,7 @@ from datetime import datetime, timezone
 
 from webutil import truncate
 
-QUEUE_POLL = 3           # 排队轮询间隔（秒）
-MAX_RETRIES = 2          # 被电脑接管打断后的自动重试上限
+TAKEOVER_POLL = 2        # 飞行中检测电脑是否开始执行命令的间隔（秒）
 
 SID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
@@ -91,17 +90,12 @@ class SendManager:
         self.current_sid = None
         self._last_finish_sid = None  # 手机自己刚写完的会话（活动窗口不算"电脑占用"）
         self._last_finish_ts = 0
-        self._queue = collections.deque()   # 等待电脑让出会话的发送任务
-        threading.Thread(target=self._queue_loop, daemon=True).start()
 
     def status(self):
         with self._lock:
-            first = self._queue[0] if self._queue else None
             return {"sending": self.sending, "since": self.since,
                     "lastError": self.last_error,
-                    "currentSessionId": self.current_sid,
-                    "queued": len(self._queue),
-                    "queueText": truncate(first["text"], 60) if first else None}
+                    "currentSessionId": self.current_sid}
 
     def finished_recently(self, sid):
         """手机发送刚在该会话完成：其写入触发的活动窗口不应误拦下一次发送"""
@@ -122,17 +116,10 @@ class SendManager:
         if len(text) > 4000:
             return 400, {"error": "消息过长（最多 4000 字符）"}
         info = self.session_check(sid)
-        if info.get("tuiInSession"):
-            # 会话独占：电脑 CC 停留该会话时排队，电脑切走后自动执行
-            with self._lock:
-                self._queue.append({"sid": sid, "text": text,
-                                    "cwd": info.get("cwd"), "ip": ip, "retries": 0})
-            self.audit("手机发送排队", f"session={sid[:8]} text={truncate(text, 200)!r}", ip)
-            self.notify("📱 收到手机指令（已排队）", truncate(text, 80))
-            self._tick()   # 电脑可能刚切走，立即尝试出队
-            return 202, {"ok": True, "queued": True,
-                         "note": "已排队：电脑端 CC 占用该会话中，电脑切走后自动执行（点发送键取消）"}
-        if info.get("running"):
+        if info.get("tuiBusy"):
+            return 423, {"error": "电脑端正在该会话处理任务，稍后再发"}
+        if info.get("running") and not info.get("tuiInSession"):
+            # 60 秒活动窗口兜底（sessions 目录缺失等场景）；电脑只是停留不拦
             return 423, {"error": "该会话最近有电脑端活动，稍等片刻再发"}
         with self._lock:
             if self.sending:
@@ -143,46 +130,9 @@ class SendManager:
             self.current_sid = sid
         self.audit("手机发送", f"session={sid[:8]} text={truncate(text, 200)!r}", ip)
         self.notify("📱 收到手机指令", truncate(text, 80))
-        item = {"sid": sid, "text": text, "cwd": info.get("cwd"), "ip": ip, "retries": 0}
+        item = {"sid": sid, "text": text, "cwd": info.get("cwd"), "ip": ip}
         threading.Thread(target=self._run, args=(item,), daemon=True).start()
         return 202, {"ok": True, "since": self.since}
-
-    # ---- 排队调度 ----
-    def _queue_loop(self):
-        while True:
-            time.sleep(QUEUE_POLL)
-            try:
-                self._tick()
-            except Exception:
-                pass
-
-    def _tick(self):
-        """队列头任务在电脑让出会话后出队执行（全局单飞行）"""
-        with self._lock:
-            if self.sending or not self._queue:
-                return
-            item = self._queue[0]
-        try:
-            taken = self.session_check(item["sid"]).get("tuiInSession")
-        except Exception:
-            return                       # 检测失败就保守等待下一轮
-        if taken:
-            return
-        started = False
-        with self._lock:
-            if not self.sending and self._queue and self._queue[0] is item:
-                self._queue.popleft()
-                self.sending = True
-                self.since = datetime.now(timezone.utc).isoformat()
-                self.current_sid = item["sid"]
-                self.last_error = None
-                started = True
-        if not started:
-            return
-        self.audit("手机发送", f"session={item['sid'][:8]} text={truncate(item['text'], 200)!r}",
-                   item["ip"])
-        self.notify("📱 收到手机指令", truncate(item["text"], 80))
-        threading.Thread(target=self._run, args=(item,), daemon=True).start()
 
     # ---- 斜杠命令 ----
     @staticmethod
@@ -375,7 +325,7 @@ class SendManager:
 
     def _run(self, item):
         sid, text, cwd = item["sid"], item["text"], item.get("cwd")
-        ip, retries = item.get("ip", ""), item.get("retries", 0)
+        ip = item.get("ip", "")
         try:
             flag = "--resume" if self._transcript_exists(sid) else "--session-id"
             cmd = [self.claude_exe, "-p", text]
@@ -392,13 +342,13 @@ class SendManager:
                     creationflags=flags)
             taken = False
             code = None
-            while True:   # 轮询等待，期间检测电脑是否接管该会话
+            while True:   # 轮询等待；电脑一旦开始执行命令（busy）立即终止手机任务
                 code = self.proc.poll()
                 if code is not None:
                     break
-                time.sleep(2)
+                time.sleep(TAKEOVER_POLL)
                 try:
-                    if self.session_check(sid).get("tuiInSession"):
+                    if self.session_check(sid).get("tuiBusy"):
                         taken = True
                         break
                 except Exception:
@@ -408,7 +358,9 @@ class SendManager:
                 self._stopped = False
             if taken and not stopped:
                 self._kill_proc()
-                self._requeue(item, sid, retries)
+                self._fail("任务已被电脑端终止（电脑开始执行命令）")
+                self.audit("手机任务被电脑终止", f"session={sid[:8]}", ip)
+                self.notify("⛔ 手机任务被电脑终止", "电脑端开始执行命令，手机任务已停止")
                 return
             if code != 0 and not stopped:
                 self._fail(f"子进程退出码 {code}")
@@ -443,30 +395,13 @@ class SendManager:
             except Exception:
                 pass
 
-    def _requeue(self, item, sid, retries):
-        """被电脑端接管打断：自动重新排队（有限次）"""
-        if retries >= MAX_RETRIES:
-            self._fail("任务多次被电脑端接管打断，已放弃（可稍后重发）")
-            self.notify("⚠️ 手机任务失败", "多次被电脑端打断，已放弃")
-            return
-        with self._lock:
-            self._queue.append({"sid": sid, "text": item["text"], "cwd": item.get("cwd"),
-                                "ip": item.get("ip", ""), "retries": retries + 1})
-        self.audit("手机任务被打断", f"session={sid[:8]} 电脑端接管，第 {retries + 1} 次自动重试",
-                   item.get("ip", ""))
-        self.notify("⏸ 手机任务暂停", "电脑端进入了该会话，任务已暂停并自动重试")
-
     def _fail(self, msg):
         print(f"[发送] {msg}")
         with self._lock:
             self.last_error = msg
 
     def stop(self, ip=""):
-        with self._lock:
-            cancelled = len(self._queue)
-            self._queue.clear()      # 取消所有排队中的任务
-        if cancelled:
-            self.audit("手机取消排队", f"n={cancelled}", ip)
+        """手机端强制停止正在执行的任务（taskkill 强杀进程树）"""
         p = None
         for _ in range(30):  # 等待 _run 线程完成 Popen（最多 3 秒）
             with self._lock:
@@ -474,12 +409,13 @@ class SendManager:
             if p is not None:
                 break
             if not self.sending:
-                return {"ok": True, "stopped": False, "cancelled": cancelled}
+                return {"ok": True, "stopped": False}
             time.sleep(0.1)
         if p is None:
-            return {"ok": True, "stopped": False, "cancelled": cancelled}
+            return {"ok": True, "stopped": False}
         with self._lock:
             self._stopped = True
         self.audit("手机停止", f"pid={p.pid}", ip)
         self._kill_proc()
-        return {"ok": True, "stopped": True, "cancelled": cancelled}
+        self.notify("⏹ 手机任务已停止", "由手机端强制停止")
+        return {"ok": True, "stopped": True}
