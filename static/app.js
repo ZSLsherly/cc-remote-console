@@ -82,7 +82,6 @@ $('login-form').addEventListener('submit', async (e) => {
 /* ================= 监视视图 ================= */
 let sessions = [], cur = null, msgs = [], total = 0, stick = true;
 let phoneSid = null, control = false, sending = false;
-let phoneMode = false;      // 「📱 手机」标签是否激活（决定输入框/提示条显隐）
 let bannerTimer = null, lastErrKey = null;
 let firstRender = true;
 const PAGE = 300;          // 长会话分页：首屏只加载最新 300 条
@@ -248,20 +247,16 @@ function resetView() {
 function applyMeta(s) {
   $('meta').textContent = (s.cwd ? s.cwd : '') + (s.branch ? '  [' + s.branch + ']' : '');
   $('dot').className = s.running ? 'run' : '';
-  $('status').textContent = phoneMode ? '发消息模式'
-    : (cur === phoneSid ? '手机会话' : (s.running ? '运行中' : '空闲'));
-  const showBar = phoneMode && control;          // 发消息模式：任意选中会话都可发送
-  $('phonebar').classList.toggle('hidden', !phoneMode);
-  if (phoneMode) {
+  $('status').textContent = cur === phoneSid ? '手机会话' : (s.running ? '运行中' : '空闲');
+  const showBar = control;                       // 输入框常驻（不发消息即等价于监视）
+  $('phonebar').classList.toggle('hidden', !control);
+  if (control) {
     const note = $('phonenote');
-    if (!control) {
-      note.textContent = '发送功能未启用（服务端未找到 claude）';
-      note.className = 'off';
-    } else if (s.running) {
+    if (s.running) {
       note.textContent = '⚠️ 电脑端正在该会话中处理任务，稍后再发（自动恢复）';
       note.className = 'off';
     } else {
-      note.textContent = '消息会在所选会话中自动执行，请只发送可信任务';
+      note.textContent = '支持 /clear /skills /status /model /memory /export /help 及技能调用';
       note.className = 'on';
     }
   }
@@ -551,20 +546,19 @@ $('term-new').addEventListener('click', () => {
 function switchView(name) {
   document.querySelectorAll('.tab').forEach((b) =>
     b.classList.toggle('active', b.dataset.view === name));
-  const isMonitor = name === 'monitor' || name === 'send';
-  phoneMode = name === 'send';
-  $('monitor-view').classList.toggle('hidden', !isMonitor);
+  const isMain = name !== 'term';
+  $('monitor-view').classList.toggle('hidden', !isMain);
   $('term-view').classList.toggle('hidden', name !== 'term');
   const curInfo = sessions.find((s) => s.sessionId === cur);
   if (curInfo) applyMeta(curInfo);                  // 立即刷新提示条/输入框，不等轮询
-  if (isMonitor) setTimeout(layoutMsgbar, 0);
+  if (isMain) setTimeout(layoutMsgbar, 0);
   if (name === 'term') {
     initTerm();
     refreshTermList();
     if (!ws || ws.readyState > 1) connectTerm();
     setTimeout(onTermResize, 50);
-  } else if (name === 'send') {
-    // 发消息模式：保留当前选中的会话，切换下拉框即可控制任意会话
+  } else {
+    // 保留当前选中的会话，切换下拉框即可监视/控制任意会话
     if (!cur && sessions.length) {
       cur = sessions[0].sessionId;
       $('sel').value = cur;
@@ -587,7 +581,7 @@ let started = false;
 function startApp() {
   if (started) return;
   started = true;
-  switchView('monitor');
+  switchView('send');
   pollOverview();
   pollStatus();
   setInterval(pollOverview, 10000);
