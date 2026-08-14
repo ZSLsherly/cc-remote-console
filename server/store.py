@@ -16,6 +16,11 @@ SUMMARY_TRUNC = 300      # 工具入参摘要最大显示长度
 RUNNING_WINDOW = 60      # 最后活动 N 秒内视为"运行中"
 POLL_INTERVAL = 1.0      # 文件扫描间隔（秒）
 
+# 系统噪音块：task-notification 等工具通知不该显示为聊天消息
+NOISE_PREFIXES = ("<task-notification>", "<local-command-stdout>",
+                  "<command-name>", "<command-message>", "<command-args>")
+NOISE_TEXT_PREFIX = "[SYSTEM NOTIFICATION"
+
 
 class Session:
     """单个会话文件的状态：字节游标 + 解析出的消息列表"""
@@ -77,7 +82,9 @@ class Session:
         if t == "ai-title" and d.get("aiTitle"):
             self.title = d["aiTitle"]
         elif t in ("user", "assistant", "attachment"):
-            self.messages.append(self._to_message(t, d))
+            m = self._to_message(t, d)
+            if m is not None:      # 系统噪音块返回 None，不渲染
+                self.messages.append(m)
 
     def _to_message(self, t, d):
         m = {"ts": d.get("timestamp"), "role": t, "text": "", "thinking": None,
@@ -85,6 +92,8 @@ class Session:
         content = (d.get("message") or {}).get("content")
         if t == "user":
             if isinstance(content, str):
+                if self._is_noise(content):
+                    return None     # <task-notification> 等系统通知，不显示
                 m["text"] = content
             elif isinstance(content, list):
                 texts, results = [], []
@@ -127,6 +136,11 @@ class Session:
                 "content": truncate(att.get("content", ""), RESULT_TRUNC),
             }
         return m
+
+    @staticmethod
+    def _is_noise(text):
+        t = (text or "").strip()
+        return t.startswith(NOISE_PREFIXES) or t.startswith(NOISE_TEXT_PREFIX)
 
     def _attach_tool_results(self, results):
         """把工具结果挂到最近一条尚无结果的 tool_use 上"""
