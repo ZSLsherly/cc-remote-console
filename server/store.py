@@ -274,10 +274,10 @@ class Store:
         recent = bool(s.last_ts) and (time.time() - s.last_ts) < RUNNING_WINDOW
         if tui is None:
             return recent                    # 旧版 CC 无 sessions 目录：退回活动窗口
-        if tui.get(s.sid):
-            return True                      # 电脑交互 CC 正在该会话中生成
+        if s.sid in tui:
+            return True                      # 电脑交互 CC 占用该会话（手机发送将排队）
         if s.sid in headless:
-            return False                     # 无头实例在写：队列串行，不视为占用
+            return False                     # 无头实例在写（手机自己），不视为占用
         return recent
 
     def overview(self):

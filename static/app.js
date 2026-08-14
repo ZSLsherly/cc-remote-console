@@ -81,7 +81,7 @@ $('login-form').addEventListener('submit', async (e) => {
 
 /* ================= 监视视图 ================= */
 let sessions = [], cur = null, msgs = [], total = 0, stick = true;
-let phoneSid = null, control = false, sending = false;
+let phoneSid = null, control = false, sending = false, queued = 0;
 let bannerTimer = null, lastErrKey = null;
 let firstRender = true;
 const PAGE = 300;          // 长会话分页：首屏只加载最新 300 条
@@ -253,8 +253,8 @@ function applyMeta(s) {
   if (control) {
     const note = $('phonenote');
     if (s.running) {
-      note.textContent = '⚠️ 电脑端正在该会话中处理任务，稍后再发（自动恢复）';
-      note.className = 'off';
+      note.textContent = '🟡 电脑端占用该会话：发送会自动排队，电脑切走后执行';
+      note.className = 'on';
     } else {
       note.textContent = '支持 /clear /skills /status /model /memory /export /help 及技能调用';
       note.className = 'on';
@@ -348,9 +348,18 @@ async function pollStatus() {
   control = d.control || false;
   phoneSid = d.phoneSessionId || null;
   sending = d.sending || false;
-  $('btn').disabled = sending;
-  $('btn').textContent = sending ? '处理中…' : '发送';
-  $('inp').disabled = sending;
+  queued = d.queued || 0;
+  if (sending) {
+    $('btn').textContent = '停止';
+    $('btn').disabled = false;
+  } else if (queued) {
+    $('btn').textContent = '取消排队(' + queued + ')';
+    $('btn').disabled = false;
+  } else {
+    $('btn').textContent = '发送';
+    $('btn').disabled = false;
+  }
+  $('inp').disabled = false;
   if (d.lastError && d.lastError !== lastErrKey) {
     lastErrKey = d.lastError;
     showBanner('发送失败：' + d.lastError);
@@ -368,7 +377,7 @@ $('cmdbox').addEventListener('click', (e) => {
 $('cmdbox-close').addEventListener('click', () => $('cmdbox').classList.add('hidden'));
 
 async function sendMsg() {
-  if (sending) return;
+  if (sending) { showBanner('任务进行中：点「停止」可中止'); return; }
   const t = $('inp').value.trim();
   if (!t || !cur) return;
   try {
@@ -377,13 +386,20 @@ async function sendMsg() {
       showCmdBox(d.cmd, d.text);
       return;
     }
-    if (d && d.note) showBanner(d.note, 8000);   // /clear 等命令的结果说明
+    if (d && d.note) showBanner(d.note, 8000);   // 排队 / /clear 等结果说明
     $('inp').value = '';
   } catch (e) {
     if (e.message !== 'unauthorized' && e.message !== 'csrf') showBanner(e.message);
   }
 }
-$('btn').addEventListener('click', sendMsg);
+$('btn').addEventListener('click', () => {
+  if (sending || queued) {
+    api('stop', {method: 'POST'}).catch(() => {});
+    showBanner(sending ? '已停止任务' : '已取消排队');
+    return;
+  }
+  sendMsg();
+});
 $('inp').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); }
 });
